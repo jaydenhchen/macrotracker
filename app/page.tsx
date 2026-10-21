@@ -62,7 +62,7 @@ const ADD_ON_OPTIONS: FoodAddOn[] = [
   { id: "addon-lettuce", name: "Lettuce & vegetables", category: "topping", servingSize: "1 scoop", calories: 20, protein: 1, carbs: 4, fat: 0 },
 ];
 
-const ADD_ON_FOOD_PATTERN = /burrito|bowl|salad|wrap|sandwich|taco|quesadilla|pita|plate|build.?your.?own|bar/i;
+const ADD_ON_FOOD_PATTERN = /burrito|bowl|salad|wrap|sandwich|taco|quesadilla|pita|plate|build.?your.?own/i;
 
 const FOOD_TAG_FILTERS = [
   { value: "all", label: "All dietary tags" },
@@ -71,6 +71,18 @@ const FOOD_TAG_FILTERS = [
   { value: "high-protein", label: "High protein" },
   { value: "gluten-free", label: "Gluten-free" },
   { value: "dairy-free", label: "Dairy-free" },
+] as const;
+
+const FOOD_SORT_OPTIONS = [
+  { value: "logged", label: "Most logged" },
+  { value: "protein-desc", label: "Highest protein" },
+  { value: "protein-asc", label: "Lowest protein" },
+  { value: "fat-asc", label: "Lowest fat" },
+  { value: "fat-desc", label: "Highest fat" },
+  { value: "carbs-asc", label: "Lowest carbs" },
+  { value: "carbs-desc", label: "Highest carbs" },
+  { value: "calories-asc", label: "Lowest calories" },
+  { value: "calories-desc", label: "Highest calories" },
 ] as const;
 
 function blankMeals(): Record<string, MealEntry[]> {
@@ -134,6 +146,7 @@ function nutritionForMeal(food: Food, servings: number, addOns: MealAddOn[] = []
 }
 
 function addOnsForFood(food: Food): FoodAddOn[] {
+  if (food.addOns?.length) return food.addOns;
   const searchable = `${food.name} ${food.description} ${food.tags.join(" ")}`;
   return ADD_ON_FOOD_PATTERN.test(searchable) ? ADD_ON_OPTIONS : [];
 }
@@ -149,10 +162,14 @@ function displayFoodTags(food: Food) {
 }
 
 function matchesFoodTag(food: Food, filter: string) {
-  if (filter === "all") return true;
+  if (!filter || filter === "all") return true;
   const tags = food.tags.map((tag) => tag.toLowerCase().replace(/[-_]+/g, " ").trim());
   if (filter === "vegetarian") return tags.some((tag) => tag.includes("vegetarian") || tag === "vegan");
   return tags.some((tag) => tag === filter.replace("-", " ") || tag.includes(filter.replace("-", " ")));
+}
+
+function matchesFoodTags(food: Food, filters: string[]) {
+  return filters.every((filter) => matchesFoodTag(food, filter));
 }
 
 function FoodTags({ food, compact = false }: { food: Food; compact?: boolean }) {
@@ -227,6 +244,16 @@ function sortFoodsByUsage(foods: Food[], usage: FoodUsageMap): Food[] {
       return dateDifference || a.index - b.index;
     })
     .map(({ food }) => food);
+}
+
+function sortFoods(foods: Food[], usage: FoodUsageMap, sortBy: string) {
+  if (sortBy === "logged") return sortFoodsByUsage(foods, usage);
+  const [key, direction] = sortBy.split("-") as [keyof Nutrition, "asc" | "desc"];
+  return [...foods].sort((left, right) => {
+    const difference = left[key] - right[key];
+    if (difference) return direction === "asc" ? difference : -difference;
+    return (usage.get(right.id)?.count ?? 0) - (usage.get(left.id)?.count ?? 0);
+  });
 }
 
 function foodSnapshotFromEntry(entry: MealEntry): Food {
@@ -315,7 +342,7 @@ export default function Page() {
   const [modalMeal, setModalMeal] = useState<MealName>("Lunch");
   const [modalQuery, setModalQuery] = useState("");
   const [modalLocation, setModalLocation] = useState("all");
-  const [modalTagFilter, setModalTagFilter] = useState("all");
+  const [modalTagFilters, setModalTagFilters] = useState<string[]>([]);
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [servings, setServings] = useState(1);
   const [macroEntryOpen, setMacroEntryOpen] = useState(false);
@@ -401,7 +428,7 @@ export default function Page() {
     setSelectedFood(food ?? null);
     setServings(1);
     setModalQuery(food ? food.name : "");
-    setModalTagFilter("all");
+    setModalTagFilters([]);
     setAddFoodOpen(true);
   }
 
@@ -557,7 +584,7 @@ export default function Page() {
     const query = modalQuery.trim().toLowerCase();
     const matchesQuery = !query || `${food.name} ${food.description} ${food.tags.join(" ")}`.toLowerCase().includes(query);
     const matchesLocation = modalLocation === "all" || food.locationId === modalLocation;
-    return matchesQuery && matchesLocation && matchesFoodTag(food, modalTagFilter);
+    return matchesQuery && matchesLocation && matchesFoodTags(food, modalTagFilters);
   }), foodUsage);
 
   return (
@@ -599,7 +626,7 @@ export default function Page() {
       </nav>
 
       <input ref={importRef} type="file" accept="application/json" className="visually-hidden" onChange={handleImport} />
-      {addFoodOpen && <AddFoodModal foods={visibleFoods} meal={modalMeal} query={modalQuery} location={modalLocation} tagFilter={modalTagFilter} selectedFood={selectedFood} servings={servings} foodUsage={foodUsage} setQuery={setModalQuery} setLocation={setModalLocation} setTagFilter={setModalTagFilter} setMeal={setModalMeal} setSelectedFood={setSelectedFood} setServings={setServings} onAdd={addFoodToDay} onClose={() => setAddFoodOpen(false)} onToggleFavorite={toggleFavorite} favoriteIds={state.favorites} />}
+      {addFoodOpen && <AddFoodModal foods={visibleFoods} meal={modalMeal} query={modalQuery} location={modalLocation} tagFilters={modalTagFilters} selectedFood={selectedFood} servings={servings} foodUsage={foodUsage} setQuery={setModalQuery} setLocation={setModalLocation} setTagFilters={setModalTagFilters} setMeal={setModalMeal} setSelectedFood={setSelectedFood} setServings={setServings} onAdd={addFoodToDay} onClose={() => setAddFoodOpen(false)} onToggleFavorite={toggleFavorite} favoriteIds={state.favorites} />}
       {macroEntryOpen && <MacroEntryModal onAdd={addMacroEntry} onClose={() => setMacroEntryOpen(false)} />}
       {onboardingOpen && <OnboardingModal step={onboardingStep} draft={onboardingDraft} setStep={setOnboardingStep} setDraft={setOnboardingDraft} goals={calculateGoals({ age: Number(onboardingDraft.age) || 20, sex: onboardingDraft.sex, height: Number(onboardingDraft.height) || 68, heightUnit: onboardingDraft.heightUnit, weight: Number(onboardingDraft.weight) || 150, weightUnit: onboardingDraft.weightUnit, workoutDays: Math.min(7, Math.max(0, Number(onboardingDraft.workoutDays) || 0)), goal: onboardingDraft.goal, onboardingComplete: true })} onFinish={finishOnboarding} onClose={() => setOnboardingOpen(false)} />}
       {toast && <div className="toast"><Check size={17} /> {toast}</div>}
@@ -677,27 +704,75 @@ function QuickFoodCard({ food, loggedCount, isFavorite, onAdd, onToggleFavorite 
   return <button className="quick-food-card" onClick={onAdd}><FoodTags food={food} compact /><div className="quick-food-info"><strong>{food.name}</strong><span>{loggedCount ? `Logged ${loggedCount} time${loggedCount === 1 ? "" : "s"}` : `${food.calories} kcal · ${food.protein}g protein`}</span></div><span className={`favorite-button ${isFavorite ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(); }}><Heart size={16} fill={isFavorite ? "currentColor" : "none"} /></span></button>;
 }
 
+function TagFilterMenu({ selected, onChange }: { selected: string[]; onChange: (next: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+  const selectedLabels = FOOD_TAG_FILTERS.filter((filter) => selected.includes(filter.value)).map((filter) => filter.label);
+  return <div className="tag-filter-menu" ref={menuRef}>
+    <button type="button" className={`filter-trigger ${open ? "open" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <span>{selectedLabels.length ? `${selectedLabels.length} tag${selectedLabels.length === 1 ? "" : "s"}` : "All dietary tags"}</span><ChevronDown size={15} />
+    </button>
+    {open && <div className="filter-popover" role="menu">
+      <button type="button" className="filter-option clear" onClick={() => onChange([])}><span className={`filter-check ${selected.length === 0 ? "checked" : ""}`}>{selected.length === 0 ? "✓" : ""}</span><span>All dietary tags</span></button>
+      {FOOD_TAG_FILTERS.filter((filter) => filter.value !== "all").map((filter) => {
+        const checked = selected.includes(filter.value);
+        return <label className="filter-option" key={filter.value}><input type="checkbox" checked={checked} onChange={() => onChange(checked ? selected.filter((value) => value !== filter.value) : [...selected, filter.value])} /><span className="filter-check">{checked ? "✓" : ""}</span><span>{filter.label}</span></label>;
+      })}
+      <small>All selected tags must match.</small>
+    </div>}
+  </div>;
+}
+
 function FoodsView({ foods: sourceFoods, menuStatus, menuFetchedAt, favoriteFoods, foodUsage, onOpenAdd, onToggleFavorite }: { foods: Food[]; menuStatus: "loading" | "live" | "fallback"; menuFetchedAt: string; favoriteFoods: Food[]; foodUsage: FoodUsageMap; onOpenAdd: (meal?: MealName, food?: Food) => void; onToggleFavorite: (foodId: string) => void }) {
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("all");
-  const [tagFilter, setTagFilter] = useState("all");
-  const foods = sortFoodsByUsage(sourceFoods.filter((food) => {
+  const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState("logged");
+  const foods = sortFoods(sourceFoods.filter((food) => {
     const matchQuery = !query || `${food.name} ${food.description} ${food.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase());
-    return matchQuery && (location === "all" || food.locationId === location) && matchesFoodTag(food, tagFilter);
-  }), foodUsage);
+    return matchQuery && (location === "all" || food.locationId === location) && matchesFoodTags(food, tagFilters);
+  }), foodUsage, sortBy);
   const fetchedLabel = menuFetchedAt ? `Updated ${new Date(menuFetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for menu data";
-  return <><section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? "Live Nutrislice menu" : menuStatus === "loading" ? "Loading today’s menu" : "Fallback snapshot"}</div></section><div className="catalog-disclaimer">{menuStatus === "live" ? "Live menu data is pulled from Hopkins Dining’s Nutrislice feed. Recipes, portions, and allergen details can change at the dining location." : "The live menu feed was unavailable, so this is a starter snapshot for planning only. Check Hopkins Dining for today’s recipes, portions, and allergen details."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div><section className="food-toolbar"><label className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search today’s foods, tags, or ingredients" /><kbd>⌘ K</kbd></label><label className="select-field"><SlidersHorizontal size={16} /><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><label className="select-field"><select aria-label="Filter by dietary tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>{FOOD_TAG_FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select><ChevronDown size={15} /></label></section><div className="catalog-meta"><span>{foods.length} items available · {menuStatus === "live" ? "live source" : "starter data"}</span><span>{foodUsage.size ? "Most logged first · " : "Alphabetical until you log food · "}{fetchedLabel} · Nutrition values per serving</span></div><section className="food-grid">{foods.map((food) => <CatalogFoodCard key={food.id} food={food} loggedCount={foodUsage.get(food.id)?.count ?? 0} saved={favoriteFoods.some((item) => item.id === food.id)} onAdd={() => onOpenAdd("Lunch", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}</section></>;
+  return <>
+    <section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? "Live Nutrislice menu" : menuStatus === "loading" ? "Loading today’s menu" : "Fallback snapshot"}</div></section>
+    <div className="catalog-disclaimer">{menuStatus === "live" ? "Live menu data is pulled from Hopkins Dining’s Nutrislice feed. Recipes, portions, and allergen details can change at the dining location." : "The live menu feed was unavailable, so this is a starter snapshot for planning only. Check Hopkins Dining for today’s recipes, portions, and allergen details."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div>
+    <section className="food-toolbar">
+      <label className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search today’s foods, tags, or ingredients" /><kbd>⌘ K</kbd></label>
+      <label className="select-field location-select"><SlidersHorizontal size={16} /><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label>
+      <TagFilterMenu selected={tagFilters} onChange={setTagFilters} />
+      <label className="select-field sort-select"><select aria-label="Sort foods" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>{FOOD_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={15} /></label>
+    </section>
+    <div className="catalog-meta"><span>{foods.length} items available · {menuStatus === "live" ? "live source" : "starter data"}</span><span>{sortBy === "logged" ? (foodUsage.size ? "Most logged first · " : "Alphabetical until you log food · ") : `${FOOD_SORT_OPTIONS.find((option) => option.value === sortBy)?.label} · `}{fetchedLabel} · Nutrition values per serving</span></div>
+    <section className="food-grid">{foods.map((food) => <CatalogFoodCard key={food.id} food={food} loggedCount={foodUsage.get(food.id)?.count ?? 0} saved={favoriteFoods.some((item) => item.id === food.id)} onAdd={() => onOpenAdd("Lunch", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}</section>
+  </>;
 }
 
 function CatalogFoodCard({ food, loggedCount, saved, onAdd, onToggleFavorite }: { food: Food; loggedCount: number; saved: boolean; onAdd: () => void; onToggleFavorite: () => void }) {
   return <article className="catalog-food-card card"><div className="catalog-food-top"><FoodTags food={food} /><button className={`favorite-button ${saved ? "saved" : ""}`} onClick={onToggleFavorite}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button></div><div className="food-location">{food.locationName}</div><h3>{food.name}</h3><p>{food.description}</p><div className="nutrition-strip"><span><strong>{food.calories}</strong> kcal</span><span><strong>{food.protein}g</strong> protein</span><span><strong>{food.carbs}g</strong> carbs</span><span><strong>{food.fat}g</strong> fat</span></div><div className="food-card-footer"><span>{loggedCount ? `Logged ${loggedCount}×` : food.servingSize}</span><button className="small-add" onClick={onAdd}><Plus size={15} /> Log food</button></div></article>;
 }
 
-function AddFoodModal({ foods, meal, query, location, tagFilter, selectedFood, servings, foodUsage, setQuery, setLocation, setTagFilter, setMeal, setSelectedFood, setServings, onAdd, onClose, onToggleFavorite, favoriteIds }: { foods: Food[]; meal: MealName; query: string; location: string; tagFilter: string; selectedFood: Food | null; servings: number; foodUsage: FoodUsageMap; setQuery: (value: string) => void; setLocation: (value: string) => void; setTagFilter: (value: string) => void; setMeal: (value: MealName) => void; setSelectedFood: (food: Food | null) => void; setServings: (value: number) => void; onAdd: (addOns: MealAddOn[]) => void; onClose: () => void; onToggleFavorite: (foodId: string) => void; favoriteIds: string[] }) {
+function AddFoodModal({ foods, meal, query, location, tagFilters, selectedFood, servings, foodUsage, setQuery, setLocation, setTagFilters, setMeal, setSelectedFood, setServings, onAdd, onClose, onToggleFavorite, favoriteIds }: { foods: Food[]; meal: MealName; query: string; location: string; tagFilters: string[]; selectedFood: Food | null; servings: number; foodUsage: FoodUsageMap; setQuery: (value: string) => void; setLocation: (value: string) => void; setTagFilters: (value: string[]) => void; setMeal: (value: MealName) => void; setSelectedFood: (food: Food | null) => void; setServings: (value: number) => void; onAdd: (addOns: MealAddOn[]) => void; onClose: () => void; onToggleFavorite: (foodId: string) => void; favoriteIds: string[] }) {
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({});
+  const [sortBy, setSortBy] = useState("logged");
   const addOnOptions = selectedFood ? addOnsForFood(selectedFood) : [];
   const chosenAddOns = addOnOptions.filter((addOn) => (selectedAddOns[addOn.id] ?? 0) > 0).map((addOn) => ({ ...addOn, quantity: selectedAddOns[addOn.id] }));
   const selectedNutrition = selectedFood ? nutritionForMeal(selectedFood, servings, chosenAddOns) : null;
+  const displayFoods = sortFoods(foods, foodUsage, sortBy);
 
   function chooseFood(food: Food) {
     setSelectedFood(food);
@@ -712,7 +787,7 @@ function AddFoodModal({ foods, meal, query, location, tagFilter, selectedFood, s
     setSelectedAddOns((current) => ({ ...current, [addOn.id]: Math.min(4, Math.max(0, Math.round(amount * 4) / 4)) }));
   }
 
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="food-modal" role="dialog" aria-modal="true" aria-labelledby="add-food-title"><div className="modal-header"><div><p className="eyebrow">Build your log</p><h2 id="add-food-title">Add a food</h2></div><button className="close-button" onClick={onClose}><X size={19} /></button></div><div className="modal-controls"><label className="search-field"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the dining catalog" /></label><label className="select-field"><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><label className="select-field"><select aria-label="Filter by dietary tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>{FOOD_TAG_FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select><ChevronDown size={15} /></label></div><div className="meal-tabs">{MEALS.map((item) => <button key={item} className={meal === item ? "active" : ""} onClick={() => setMeal(item)}>{item}</button>)}</div><p className="food-sort-note">{foodUsage.size ? "Most logged by you appears first." : "Your most logged foods will appear first after you start logging."}</p><div className="food-modal-list">{foods.map((food) => { const loggedCount = foodUsage.get(food.id)?.count ?? 0; return <button key={food.id} className={`modal-food-row ${selectedFood?.id === food.id ? "selected" : ""}`} onClick={() => chooseFood(food)}><FoodTags food={food} compact /><span className="modal-food-copy"><strong>{food.name}</strong><small>{food.locationName} · {food.servingSize}{loggedCount ? ` · Logged ${loggedCount}×` : ""}</small></span><span className="modal-food-kcal">{food.calories}<small> kcal</small></span><span className={`favorite-button ${favoriteIds.includes(food.id) ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(food.id); }}><Heart size={16} fill={favoriteIds.includes(food.id) ? "currentColor" : "none"} /></span></button>; })}{foods.length === 0 && <div className="empty-state small"><Search size={24} /><strong>No foods found</strong><span>Try a different search or location.</span></div>}</div>{selectedFood && addOnOptions.length > 0 && <section className="add-on-panel"><div className="add-on-heading"><div><strong>Customize your {selectedFood.name}</strong><span>Optional add-ons · quantities are per serving</span></div><span className="add-on-estimate">Standard estimates</span></div>{(["protein", "topping"] as const).map((category) => <div className="add-on-group" key={category}><span className="add-on-group-label">{category === "protein" ? "Add protein" : "Toppings"}</span>{addOnOptions.filter((addOn) => addOn.category === category).map((addOn) => { const quantity = selectedAddOns[addOn.id] ?? 0; return <div className={`add-on-option ${quantity ? "selected" : ""}`} key={addOn.id}><button type="button" className="add-on-toggle" onClick={() => toggleAddOn(addOn)}><span className="add-on-check">{quantity ? "✓" : ""}</span><span className="add-on-copy"><strong>{addOn.name}</strong><small>{addOn.servingSize} · +{addOn.calories} kcal · +{formatNumber(addOn.protein)}g protein</small></span></button>{quantity > 0 && <div className="add-on-stepper"><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity - 0.25)} aria-label={`Decrease ${addOn.name}`}>−</button><span>{formatNumber(quantity)}x</span><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity + 0.25)} aria-label={`Increase ${addOn.name}`}>+</button></div>}</div>; })}</div>)}</section>}{selectedFood && <div className="selected-food-panel"><div><strong>{selectedFood.name}</strong><span>{selectedNutrition ? `${formatNumber(selectedNutrition.calories)} kcal · ${formatNumber(selectedNutrition.protein)}g protein` : ""} per {selectedFood.servingSize}{chosenAddOns.length ? ` · ${chosenAddOns.length} add-on${chosenAddOns.length === 1 ? "" : "s"}` : ""}</span></div><div className="serving-control"><span>Servings</span><div className="serving-stepper large"><button type="button" onClick={() => setServings(Math.max(0.25, servings - 0.25))}>−</button><strong>{formatNumber(servings)}</strong><button type="button" onClick={() => setServings(Math.min(20, servings + 0.25))}>+</button></div></div><button type="button" className="primary-button modal-add" onClick={() => onAdd(chosenAddOns)}><Plus size={17} /> Add to {meal.toLowerCase()}</button></div>}</div></div>;
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="food-modal" role="dialog" aria-modal="true" aria-labelledby="add-food-title"><div className="modal-header"><div><p className="eyebrow">Build your log</p><h2 id="add-food-title">Add a food</h2></div><button className="close-button" onClick={onClose}><X size={19} /></button></div><div className="modal-controls"><label className="search-field"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the dining catalog" /></label><label className="select-field"><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><TagFilterMenu selected={tagFilters} onChange={setTagFilters} /><label className="select-field"><select aria-label="Sort foods" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>{FOOD_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={15} /></label></div><div className="meal-tabs">{MEALS.map((item) => <button key={item} className={meal === item ? "active" : ""} onClick={() => setMeal(item)}>{item}</button>)}</div><p className="food-sort-note">{sortBy === "logged" ? (foodUsage.size ? "Most logged by you appears first." : "Your most logged foods will appear first after you start logging.") : `${FOOD_SORT_OPTIONS.find((option) => option.value === sortBy)?.label} first.`}</p><div className="food-modal-list">{displayFoods.map((food) => { const loggedCount = foodUsage.get(food.id)?.count ?? 0; return <button key={food.id} className={`modal-food-row ${selectedFood?.id === food.id ? "selected" : ""}`} onClick={() => chooseFood(food)}><FoodTags food={food} compact /><span className="modal-food-copy"><strong>{food.name}</strong><small>{food.locationName} · {food.servingSize}{loggedCount ? ` · Logged ${loggedCount}×` : ""}</small></span><span className="modal-food-kcal">{food.calories}<small> kcal</small></span><span className={`favorite-button ${favoriteIds.includes(food.id) ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(food.id); }}><Heart size={16} fill={favoriteIds.includes(food.id) ? "currentColor" : "none"} /></span></button>; })}{displayFoods.length === 0 && <div className="empty-state small"><Search size={24} /><strong>No foods found</strong><span>Try a different search or location.</span></div>}</div>{selectedFood && addOnOptions.length > 0 && <section className="add-on-panel"><div className="add-on-heading"><div><strong>{selectedFood.addOns?.length ? `Build your ${selectedFood.name}` : `Customize your ${selectedFood.name}`}</strong><span>{selectedFood.addOns?.length ? "Options from Hopkins’ Nutrislice menu" : "Optional standard add-ons · quantities are per serving"}</span></div><span className="add-on-estimate">{selectedFood.addOns?.length ? "Hopkins menu" : "Standard estimates"}</span></div>{(["protein", "topping"] as const).map((category) => <div className="add-on-group" key={category}><span className="add-on-group-label">{category === "protein" ? "Choose protein" : "Choose toppings"}</span>{addOnOptions.filter((addOn) => addOn.category === category).map((addOn) => { const quantity = selectedAddOns[addOn.id] ?? 0; return <div className={`add-on-option ${quantity ? "selected" : ""}`} key={addOn.id}><button type="button" className="add-on-toggle" onClick={() => toggleAddOn(addOn)}><span className="add-on-check">{quantity ? "✓" : ""}</span><span className="add-on-copy"><strong>{addOn.name}</strong><small>{addOn.servingSize} · +{addOn.calories} kcal · +{formatNumber(addOn.protein)}g protein</small></span></button>{quantity > 0 && <div className="add-on-stepper"><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity - 0.25)} aria-label={`Decrease ${addOn.name}`}>−</button><span>{formatNumber(quantity)}x</span><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity + 0.25)} aria-label={`Increase ${addOn.name}`}>+</button></div>}</div>; })}</div>)}</section>}{selectedFood && <div className="selected-food-panel"><div><strong>{selectedFood.name}</strong><span>{selectedNutrition ? `${formatNumber(selectedNutrition.calories)} kcal · ${formatNumber(selectedNutrition.protein)}g protein` : ""} per {selectedFood.servingSize}{chosenAddOns.length ? ` · ${chosenAddOns.length} add-on${chosenAddOns.length === 1 ? "" : "s"}` : ""}</span></div><div className="serving-control"><span>Servings</span><div className="serving-stepper large"><button type="button" onClick={() => setServings(Math.max(0.25, servings - 0.25))}>−</button><strong>{formatNumber(servings)}</strong><button type="button" onClick={() => setServings(Math.min(20, servings + 0.25))}>+</button></div></div><button type="button" className="primary-button modal-add" onClick={() => onAdd(chosenAddOns)}><Plus size={17} /> Add to {meal.toLowerCase()}</button></div>}</div></div>;
 }
 
 function MacroEntryModal({ onAdd, onClose }: { onAdd: (entry: Omit<MacroEntry, "id" | "createdAt">) => void; onClose: () => void }) {

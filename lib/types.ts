@@ -18,6 +18,7 @@ export type Food = Nutrition & {
   servingSize: string;
   allergens: string[];
   tags: string[];
+  addOns?: FoodAddOn[];
   updatedAt: string;
 };
 

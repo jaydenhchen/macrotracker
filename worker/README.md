@@ -23,7 +23,15 @@ Then verify the URL printed by Wrangler:
 curl -i "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/menu?date=2026-10-21"
 ```
 
-The Worker uses the Cloudflare cache API plus five-minute `Cache-Control` headers. It limits each upstream request to five seconds and continues when an individual location or meal is unavailable. A completely unavailable upstream returns `502` with `Cache-Control: no-store`, allowing the app to use its bundled fallback instead of caching an outage.
+The Worker uses the Cloudflare cache API plus five-minute `Cache-Control` headers. It reads Nutrislice's current school and menu-type directory, preserves the directory's date URL templates when present, and retries known Hopkins school-slug aliases when a renamed location returns no items. It limits each upstream request to five seconds and continues when an individual location or meal is unavailable. A completely unavailable upstream returns `502` with `Cache-Control: no-store`, allowing the app to use its bundled fallback instead of caching an outage.
+
+To verify that the proxy is not serving a one-location or stale deployment, inspect the location counts after each Worker deploy:
+
+```bash
+curl -sS "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/menu?date=$(date +%F)" | jq '{ok,food_count:(.foods|length),partial,locations:[.locations[]|{name,food_count:([.meals[].foods[]]|length)}],errors}'
+```
+
+The response should include every location for which Hopkins has menu items. Deploying the current Worker increments its internal cache schema, so the first request after this resolver change cannot reuse the previous partial cache.
 
 ## Connect GitHub Pages
 

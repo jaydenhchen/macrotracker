@@ -13,7 +13,8 @@ const DEFAULT_API_BASE = "https://hopkinsdining.api.nutrislice.com";
 const DEFAULT_CACHE_TTL = 300;
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DATE_YEAR = 2200;
-const CACHE_SCHEMA = "3";
+// Bump this whenever target resolution changes so a previously partial menu cannot mask a fix.
+const CACHE_SCHEMA = "4";
 
 function corsHeaders(request: Request, env: Env) {
   const origin = request.headers.get("Origin");
@@ -51,14 +52,45 @@ function numberEnv(value: string | undefined, fallback: number, min: number, max
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback;
 }
 
-function upstreamUrls(base: string, school: string, mealType: string, date: string) {
+function expandMenuTemplate(template: string, base: string, school: string, mealType: string, date: string) {
   const [year, month, day] = date.split("-");
   const schoolPath = school.split("/").map((part) => encodeURIComponent(part)).join("/");
   const root = base.replace(/\/$/, "");
-  return [
+  const values: Record<string, string> = {
+    school: schoolPath,
+    school_slug: schoolPath,
+    "school-slug": schoolPath,
+    menu_type: encodeURIComponent(mealType),
+    "menu-type": encodeURIComponent(mealType),
+    menutype: encodeURIComponent(mealType),
+    year,
+    month,
+    day,
+    date,
+  };
+  const expanded = template.replace(/\{([^}]+)\}/g, (match, key: string) => values[key.trim().toLowerCase()] ?? match);
+  const candidate = /^https?:\/\//i.test(expanded)
+    ? expanded
+    : `${root}/${expanded.replace(/^\/+/, "")}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.origin !== new URL(root).origin || /\{[^}]+\}/.test(parsed.pathname + parsed.search)) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function upstreamUrls(base: string, school: string, mealType: string, date: string, templates: string[] = [], templateMealType = mealType) {
+  const [year, month, day] = date.split("-");
+  const schoolPath = school.split("/").map((part) => encodeURIComponent(part)).join("/");
+  const root = base.replace(/\/$/, "");
+  const exactUrls = templates.map((template) => expandMenuTemplate(template, base, school, templateMealType, date)).filter((url): url is string => Boolean(url));
+  return Array.from(new Set([
+    ...exactUrls,
     `${root}/menu/api/weeks/school/${schoolPath}/menu-type/${encodeURIComponent(mealType)}/${year}/${month}/${day}/?format=json`,
     `${root}/menu/api/digest/school/${schoolPath}/menu-type/${encodeURIComponent(mealType)}/date/${year}/${month}/${day}/?format=json`,
-  ];
+  ]));
 }
 
 async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
@@ -98,17 +130,22 @@ async function fetchMenu(date: string, env: Env) {
 
   for (let index = 0; index < jobs.length; index += concurrency) {
     const batch = jobs.slice(index, index + concurrency);
-  const batchResults = await Promise.all(batch.map(async ({ location, school, mealType }) => {
+    const batchResults = await Promise.all(batch.map(async ({ location, schools, mealType, menuTypeUrls, menuTypeValues }) => {
       try {
         let lastError: unknown = null;
-        for (const url of upstreamUrls(base, school, mealType, date)) {
-          try {
-            const payload = await fetchJson(url, timeoutMs);
-            const items = extractMenuItems(payload, date);
-            if (items.length) return { location, mealType, items };
-            lastError = new Error("upstream returned no menu items");
-          } catch (error) {
-            lastError = error;
+        for (let schoolIndex = 0; schoolIndex < schools.length; schoolIndex += 1) {
+          const schoolCandidate = schools[schoolIndex];
+          const templates = schoolIndex === 0 ? menuTypeUrls[mealType] ?? [] : [];
+          const templateMealType = schoolIndex === 0 ? menuTypeValues[mealType] ?? mealType : mealType;
+          for (const url of upstreamUrls(base, schoolCandidate, mealType, date, templates, templateMealType)) {
+            try {
+              const payload = await fetchJson(url, timeoutMs);
+              const items = extractMenuItems(payload, date);
+              if (items.length) return { location, mealType, items };
+              lastError = new Error("upstream returned no menu items");
+            } catch (error) {
+              lastError = error;
+            }
           }
         }
         throw lastError instanceof Error ? lastError : new Error("upstream request failed");
