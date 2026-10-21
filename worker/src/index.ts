@@ -13,7 +13,7 @@ const DEFAULT_API_BASE = "https://hopkinsdining.api.nutrislice.com";
 const DEFAULT_CACHE_TTL = 300;
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DATE_YEAR = 2200;
-const CACHE_SCHEMA = "2";
+const CACHE_SCHEMA = "3";
 
 function corsHeaders(request: Request, env: Env) {
   const origin = request.headers.get("Origin");

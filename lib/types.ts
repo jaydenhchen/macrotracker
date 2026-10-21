@@ -21,6 +21,13 @@ export type Food = Nutrition & {
   updatedAt: string;
 };
 
+export type FoodAddOn = Nutrition & {
+  id: string;
+  name: string;
+  category: "protein" | "topping";
+  servingSize: string;
+};
+
 export type Location = {
   id: string;
   name: string;
@@ -38,6 +45,11 @@ export type MealEntry = {
   servings: number;
   nutrition: Nutrition;
   locationName: string;
+  addOns?: MealAddOn[];
+};
+
+export type MealAddOn = FoodAddOn & {
+  quantity: number;
 };
 
 export type MacroEntry = {

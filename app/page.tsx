@@ -31,7 +31,7 @@ import {
 import { FOODS, LOCATIONS } from "@/lib/catalog";
 import { DEFAULT_STATE, dateKey, exportState, loadState, normalizeState, saveState } from "@/lib/storage";
 import { fetchTodayMenu, NUTRISLICE_LOCATIONS } from "@/lib/nutrislice";
-import { DayLog, Food, Goals, MacroEntry, MealEntry, MealName, MEALS, Nutrition, TrackerState, UserProfile, WaterEntry, WeightEntry } from "@/lib/types";
+import { DayLog, Food, FoodAddOn, Goals, MacroEntry, MealAddOn, MealEntry, MealName, MEALS, Nutrition, TrackerState, UserProfile, WaterEntry, WeightEntry } from "@/lib/types";
 
 type View = "today" | "foods" | "weight" | "settings";
 
@@ -48,6 +48,30 @@ const MACRO_META: { key: keyof Nutrition; label: string; color: string; soft: st
   { key: "carbs", label: "Carbs", color: "#2a8d78", soft: "#e4f6f1", unit: "g" },
   { key: "fat", label: "Fat", color: "#8b69c2", soft: "#f0ebfa", unit: "g" },
 ];
+
+const ADD_ON_OPTIONS: FoodAddOn[] = [
+  { id: "addon-chicken", name: "Extra grilled chicken", category: "protein", servingSize: "1 scoop", calories: 130, protein: 26, carbs: 0, fat: 3 },
+  { id: "addon-steak", name: "Extra steak", category: "protein", servingSize: "1 scoop", calories: 170, protein: 24, carbs: 0, fat: 8 },
+  { id: "addon-tofu", name: "Tofu", category: "protein", servingSize: "1 scoop", calories: 100, protein: 10, carbs: 4, fat: 6 },
+  { id: "addon-black-beans", name: "Black beans", category: "topping", servingSize: "1 scoop", calories: 90, protein: 6, carbs: 16, fat: 1 },
+  { id: "addon-rice", name: "Rice", category: "topping", servingSize: "1 scoop", calories: 170, protein: 4, carbs: 37, fat: 1 },
+  { id: "addon-cheese", name: "Cheese", category: "topping", servingSize: "1 oz", calories: 110, protein: 7, carbs: 1, fat: 9 },
+  { id: "addon-guacamole", name: "Guacamole", category: "topping", servingSize: "2 oz", calories: 100, protein: 1, carbs: 5, fat: 9 },
+  { id: "addon-salsa", name: "Salsa", category: "topping", servingSize: "2 oz", calories: 25, protein: 1, carbs: 5, fat: 0 },
+  { id: "addon-sour-cream", name: "Sour cream", category: "topping", servingSize: "1 oz", calories: 60, protein: 1, carbs: 2, fat: 5 },
+  { id: "addon-lettuce", name: "Lettuce & vegetables", category: "topping", servingSize: "1 scoop", calories: 20, protein: 1, carbs: 4, fat: 0 },
+];
+
+const ADD_ON_FOOD_PATTERN = /burrito|bowl|salad|wrap|sandwich|taco|quesadilla|pita|plate|build.?your.?own|bar/i;
+
+const FOOD_TAG_FILTERS = [
+  { value: "all", label: "All dietary tags" },
+  { value: "vegan", label: "Vegan" },
+  { value: "vegetarian", label: "Vegetarian" },
+  { value: "high-protein", label: "High protein" },
+  { value: "gluten-free", label: "Gluten-free" },
+  { value: "dairy-free", label: "Dairy-free" },
+] as const;
 
 function blankMeals(): Record<string, MealEntry[]> {
   return {};
@@ -76,6 +100,64 @@ function scaleNutrition(food: Food, servings: number): Nutrition {
     carbs: Math.round(food.carbs * servings * 10) / 10,
     fat: Math.round(food.fat * servings * 10) / 10,
   };
+}
+
+function sumNutrition(first: Nutrition, second: Nutrition): Nutrition {
+  return {
+    calories: first.calories + second.calories,
+    protein: first.protein + second.protein,
+    carbs: first.carbs + second.carbs,
+    fat: first.fat + second.fat,
+  };
+}
+
+function subtractNutrition(first: Nutrition, second: Nutrition): Nutrition {
+  return {
+    calories: Math.max(0, first.calories - second.calories),
+    protein: Math.max(0, Math.round((first.protein - second.protein) * 10) / 10),
+    carbs: Math.max(0, Math.round((first.carbs - second.carbs) * 10) / 10),
+    fat: Math.max(0, Math.round((first.fat - second.fat) * 10) / 10),
+  };
+}
+
+function scaleAddOn(addOn: FoodAddOn, quantity: number): Nutrition {
+  return {
+    calories: Math.round(addOn.calories * quantity),
+    protein: Math.round(addOn.protein * quantity * 10) / 10,
+    carbs: Math.round(addOn.carbs * quantity * 10) / 10,
+    fat: Math.round(addOn.fat * quantity * 10) / 10,
+  };
+}
+
+function nutritionForMeal(food: Food, servings: number, addOns: MealAddOn[] = []): Nutrition {
+  return addOns.reduce((total, addOn) => sumNutrition(total, scaleAddOn(addOn, addOn.quantity * servings)), scaleNutrition(food, servings));
+}
+
+function addOnsForFood(food: Food): FoodAddOn[] {
+  const searchable = `${food.name} ${food.description} ${food.tags.join(" ")}`;
+  return ADD_ON_FOOD_PATTERN.test(searchable) ? ADD_ON_OPTIONS : [];
+}
+
+function displayFoodTags(food: Food) {
+  const tags = Array.from(new Set(food.tags.map((tag) => tag.trim()).filter(Boolean)));
+  const priority = [/^vegan$/i, /^vegetarian/i, /high.?protein/i, /gluten.?free/i, /dairy.?free/i, /contains/i];
+  return tags.sort((a, b) => {
+    const aPriority = priority.findIndex((pattern) => pattern.test(a));
+    const bPriority = priority.findIndex((pattern) => pattern.test(b));
+    return (aPriority < 0 ? 99 : aPriority) - (bPriority < 0 ? 99 : bPriority);
+  }).slice(0, 4);
+}
+
+function matchesFoodTag(food: Food, filter: string) {
+  if (filter === "all") return true;
+  const tags = food.tags.map((tag) => tag.toLowerCase().replace(/[-_]+/g, " ").trim());
+  if (filter === "vegetarian") return tags.some((tag) => tag.includes("vegetarian") || tag === "vegan");
+  return tags.some((tag) => tag === filter.replace("-", " ") || tag.includes(filter.replace("-", " ")));
+}
+
+function FoodTags({ food, compact = false }: { food: Food; compact?: boolean }) {
+  const tags = displayFoodTags(food).slice(0, compact ? 1 : 4);
+  return <span className={`food-tags ${compact ? "compact" : ""}`}>{tags.map((tag) => <span className={`food-tag ${/^vegan$/i.test(tag) ? "vegan" : /^vegetarian/i.test(tag) ? "vegetarian" : ""}`} key={tag}>{tag}</span>)}</span>;
 }
 
 function sumEntries(entries: MealEntry[] = []): Nutrition {
@@ -110,6 +192,63 @@ function sumDay(day: ReturnType<typeof emptyDay>): Nutrition {
 
 function sumWater(day: ReturnType<typeof emptyDay>) {
   return day.waterEntries.reduce((total, entry) => total + entry.amount, 0);
+}
+
+type FoodUsage = {
+  count: number;
+  servings: number;
+  lastLoggedDate: string;
+};
+
+type FoodUsageMap = ReadonlyMap<string, FoodUsage>;
+
+function collectFoodUsage(dayLogs: TrackerState["dayLogs"]): Map<string, FoodUsage> {
+  const usage = new Map<string, FoodUsage>();
+  Object.entries(dayLogs).forEach(([date, day]) => {
+    Object.values(day.meals).flat().forEach((entry) => {
+      const current = usage.get(entry.foodId);
+      usage.set(entry.foodId, {
+        count: (current?.count ?? 0) + 1,
+        servings: (current?.servings ?? 0) + entry.servings,
+        lastLoggedDate: !current || date > current.lastLoggedDate ? date : current.lastLoggedDate,
+      });
+    });
+  });
+  return usage;
+}
+
+function sortFoodsByUsage(foods: Food[], usage: FoodUsageMap): Food[] {
+  return foods
+    .map((food, index) => ({ food, index, stats: usage.get(food.id) }))
+    .sort((a, b) => {
+      const countDifference = (b.stats?.count ?? 0) - (a.stats?.count ?? 0);
+      if (countDifference) return countDifference;
+      const dateDifference = (b.stats?.lastLoggedDate ?? "").localeCompare(a.stats?.lastLoggedDate ?? "");
+      return dateDifference || a.index - b.index;
+    })
+    .map(({ food }) => food);
+}
+
+function foodSnapshotFromEntry(entry: MealEntry): Food {
+  const servings = Math.max(entry.servings, 0.25);
+  const addOnNutrition = (entry.addOns ?? []).reduce((total, addOn) => sumNutrition(total, scaleAddOn(addOn, addOn.quantity * servings)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+  const baseNutrition = subtractNutrition(entry.nutrition, addOnNutrition);
+  return {
+    id: entry.foodId,
+    name: entry.foodName,
+    description: "Previously logged Hopkins food",
+    locationId: "logged-history",
+    locationName: entry.locationName,
+    mealPeriods: [],
+    servingSize: entry.servingSize,
+    calories: Math.round(baseNutrition.calories / servings),
+    protein: Math.round((baseNutrition.protein / servings) * 10) / 10,
+    carbs: Math.round((baseNutrition.carbs / servings) * 10) / 10,
+    fat: Math.round((baseNutrition.fat / servings) * 10) / 10,
+    allergens: [],
+    tags: [],
+    updatedAt: entry.id,
+  };
 }
 
 function makeId() {
@@ -176,6 +315,7 @@ export default function Page() {
   const [modalMeal, setModalMeal] = useState<MealName>("Lunch");
   const [modalQuery, setModalQuery] = useState("");
   const [modalLocation, setModalLocation] = useState("all");
+  const [modalTagFilter, setModalTagFilter] = useState("all");
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [servings, setServings] = useState(1);
   const [macroEntryOpen, setMacroEntryOpen] = useState(false);
@@ -239,14 +379,14 @@ export default function Page() {
 
   const day = state.dayLogs[selectedDate] ?? emptyDay(selectedDate);
   const totals = useMemo(() => sumDay(day), [day]);
-  const foodCatalog = useMemo(() => Array.from(new Map([...menuFoods, ...FOODS].map((food) => [food.id, food])).values()), [menuFoods]);
-  const recentFoods = useMemo(() => {
-    const ids = Object.values(state.dayLogs)
+  const foodUsage = useMemo(() => collectFoodUsage(state.dayLogs), [state.dayLogs]);
+  const foodCatalog = useMemo(() => {
+    const loggedSnapshots = Object.values(state.dayLogs)
       .flatMap((log) => Object.values(log.meals).flat())
-      .sort((a, b) => b.id.localeCompare(a.id))
-      .map((entry) => entry.foodId);
-    return Array.from(new Set(ids)).map((id) => foodCatalog.find((food) => food.id === id)).filter(Boolean) as Food[];
-  }, [state.dayLogs, foodCatalog]);
+      .reduce((foods, entry) => foods.set(entry.foodId, foodSnapshotFromEntry(entry)), new Map<string, Food>());
+    return Array.from(new Map([...Array.from(loggedSnapshots.values()), ...FOODS, ...menuFoods].map((food) => [food.id, food])).values());
+  }, [menuFoods, state.dayLogs]);
+  const mostLoggedFoods = useMemo(() => sortFoodsByUsage(foodCatalog.filter((food) => foodUsage.has(food.id)), foodUsage), [foodCatalog, foodUsage]);
   const favoriteFoods = useMemo(() => state.favorites.map((id) => foodCatalog.find((food) => food.id === id)).filter(Boolean) as Food[], [state.favorites, foodCatalog]);
 
   function updateDay(updater: (current: ReturnType<typeof emptyDay>) => ReturnType<typeof emptyDay>) {
@@ -261,10 +401,11 @@ export default function Page() {
     setSelectedFood(food ?? null);
     setServings(1);
     setModalQuery(food ? food.name : "");
+    setModalTagFilter("all");
     setAddFoodOpen(true);
   }
 
-  function addFoodToDay() {
+  function addFoodToDay(addOns: MealAddOn[] = []) {
     if (!selectedFood) return;
     const entry: MealEntry = {
       id: makeId(),
@@ -272,12 +413,13 @@ export default function Page() {
       foodName: selectedFood.name,
       servingSize: selectedFood.servingSize,
       servings,
-      nutrition: scaleNutrition(selectedFood, servings),
+      nutrition: nutritionForMeal(selectedFood, servings, addOns),
       locationName: selectedFood.locationName,
+      ...(addOns.length ? { addOns } : {}),
     };
     updateDay((current) => ({ ...current, meals: { ...current.meals, [modalMeal]: [...(current.meals[modalMeal] ?? []), entry] } }));
     setAddFoodOpen(false);
-    setToast(`${selectedFood.name} added to ${modalMeal.toLowerCase()}`);
+    setToast(`${selectedFood.name}${addOns.length ? " with add-ons" : ""} added to ${modalMeal.toLowerCase()}`);
   }
 
   function updateEntry(mealName: string, entryId: string, nextServings: number) {
@@ -289,7 +431,7 @@ export default function Page() {
         [mealName]: (current.meals[mealName] ?? []).map((entry) => {
           if (entry.id !== entryId) return entry;
           const food = foodCatalog.find((item) => item.id === entry.foodId);
-          if (food) return { ...entry, servings: safeServings, nutrition: scaleNutrition(food, safeServings) };
+          if (food) return { ...entry, servings: safeServings, nutrition: nutritionForMeal(food, safeServings, entry.addOns) };
           const base = Math.max(entry.servings, 0.25);
           return {
             ...entry,
@@ -411,12 +553,12 @@ export default function Page() {
     event.target.value = "";
   }
 
-  const visibleFoods = menuFoods.filter((food) => {
+  const visibleFoods = sortFoodsByUsage(menuFoods.filter((food) => {
     const query = modalQuery.trim().toLowerCase();
     const matchesQuery = !query || `${food.name} ${food.description} ${food.tags.join(" ")}`.toLowerCase().includes(query);
     const matchesLocation = modalLocation === "all" || food.locationId === modalLocation;
-    return matchesQuery && matchesLocation;
-  });
+    return matchesQuery && matchesLocation && matchesFoodTag(food, modalTagFilter);
+  }), foodUsage);
 
   return (
     <div className="app-shell">
@@ -445,8 +587,8 @@ export default function Page() {
         </header>
 
         <div className="page-wrap">
-          {activeView === "today" && <TodayView day={day} totals={totals} goals={state.goals} waterGoal={state.waterGoal} favoriteFoods={favoriteFoods} recentFoods={recentFoods} onOpenAdd={openAddFood} onOpenMacroEntry={() => setMacroEntryOpen(true)} onUpdateEntry={updateEntry} onRemoveEntry={removeEntry} onRemoveMacroEntry={removeMacroEntry} onAddWater={addWater} onRemoveWater={removeWater} onToggleFavorite={toggleFavorite} />}
-          {activeView === "foods" && <FoodsView foods={menuFoods} menuStatus={menuStatus} menuFetchedAt={menuFetchedAt} favoriteFoods={favoriteFoods} onOpenAdd={openAddFood} onToggleFavorite={toggleFavorite} />}
+          {activeView === "today" && <TodayView day={day} totals={totals} goals={state.goals} waterGoal={state.waterGoal} favoriteFoods={favoriteFoods} mostLoggedFoods={mostLoggedFoods} foodUsage={foodUsage} onOpenAdd={openAddFood} onOpenMacroEntry={() => setMacroEntryOpen(true)} onUpdateEntry={updateEntry} onRemoveEntry={removeEntry} onRemoveMacroEntry={removeMacroEntry} onAddWater={addWater} onRemoveWater={removeWater} onToggleFavorite={toggleFavorite} />}
+          {activeView === "foods" && <FoodsView foods={menuFoods} menuStatus={menuStatus} menuFetchedAt={menuFetchedAt} favoriteFoods={favoriteFoods} foodUsage={foodUsage} onOpenAdd={openAddFood} onToggleFavorite={toggleFavorite} />}
           {activeView === "weight" && <WeightView state={state} selectedDate={selectedDate} weightDraft={weightDraft} weightRange={weightRange} setWeightDraft={setWeightDraft} setWeightRange={setWeightRange} onUnitChange={(unit) => setState((current) => ({ ...current, preferredWeightUnit: unit }))} onAddWeight={addWeight} onDeleteWeight={(id) => setState((current) => ({ ...current, weights: current.weights.filter((entry) => entry.id !== id) }))} />}
           {activeView === "settings" && <SettingsView state={state} calcWeight={calcWeight} calcWorkoutDays={calcWorkoutDays} calcGoal={calcGoal} setCalcWeight={setCalcWeight} setCalcWorkoutDays={setCalcWorkoutDays} setCalcGoal={setCalcGoal} onApplyGuided={applyGuidedGoals} onOpenOnboarding={() => { setOnboardingDraft(profileToDraft(state.profile, state.waterGoal)); setOnboardingStep(1); setOnboardingOpen(true); }} onUpdateGoal={updateGoal} onExport={() => exportState(state)} onImport={() => importRef.current?.click()} />}
         </div>
@@ -457,7 +599,7 @@ export default function Page() {
       </nav>
 
       <input ref={importRef} type="file" accept="application/json" className="visually-hidden" onChange={handleImport} />
-      {addFoodOpen && <AddFoodModal foods={visibleFoods} meal={modalMeal} query={modalQuery} location={modalLocation} selectedFood={selectedFood} servings={servings} setQuery={setModalQuery} setLocation={setModalLocation} setMeal={setModalMeal} setSelectedFood={setSelectedFood} setServings={setServings} onAdd={addFoodToDay} onClose={() => setAddFoodOpen(false)} onToggleFavorite={toggleFavorite} favoriteIds={state.favorites} />}
+      {addFoodOpen && <AddFoodModal foods={visibleFoods} meal={modalMeal} query={modalQuery} location={modalLocation} tagFilter={modalTagFilter} selectedFood={selectedFood} servings={servings} foodUsage={foodUsage} setQuery={setModalQuery} setLocation={setModalLocation} setTagFilter={setModalTagFilter} setMeal={setModalMeal} setSelectedFood={setSelectedFood} setServings={setServings} onAdd={addFoodToDay} onClose={() => setAddFoodOpen(false)} onToggleFavorite={toggleFavorite} favoriteIds={state.favorites} />}
       {macroEntryOpen && <MacroEntryModal onAdd={addMacroEntry} onClose={() => setMacroEntryOpen(false)} />}
       {onboardingOpen && <OnboardingModal step={onboardingStep} draft={onboardingDraft} setStep={setOnboardingStep} setDraft={setOnboardingDraft} goals={calculateGoals({ age: Number(onboardingDraft.age) || 20, sex: onboardingDraft.sex, height: Number(onboardingDraft.height) || 68, heightUnit: onboardingDraft.heightUnit, weight: Number(onboardingDraft.weight) || 150, weightUnit: onboardingDraft.weightUnit, workoutDays: Math.min(7, Math.max(0, Number(onboardingDraft.workoutDays) || 0)), goal: onboardingDraft.goal, onboardingComplete: true })} onFinish={finishOnboarding} onClose={() => setOnboardingOpen(false)} />}
       {toast && <div className="toast"><Check size={17} /> {toast}</div>}
@@ -470,7 +612,7 @@ function NavButton({ item, activeView, onClick, mobile = false }: { item: (typeo
   return <button className={`nav-button ${activeView === item.id ? "active" : ""} ${mobile ? "mobile-nav-button" : ""}`} onClick={() => onClick(item.id)}><Icon size={mobile ? 21 : 19} /><span>{item.label}</span>{item.id === "today" && !mobile && <span className="nav-live" />}</button>;
 }
 
-function TodayView({ day, totals, goals, waterGoal, favoriteFoods, recentFoods, onOpenAdd, onOpenMacroEntry, onUpdateEntry, onRemoveEntry, onRemoveMacroEntry, onAddWater, onRemoveWater, onToggleFavorite }: { day: ReturnType<typeof emptyDay>; totals: Nutrition; goals: Goals; waterGoal: number; favoriteFoods: Food[]; recentFoods: Food[]; onOpenAdd: (meal?: MealName, food?: Food) => void; onOpenMacroEntry: () => void; onUpdateEntry: (mealName: string, entryId: string, servings: number) => void; onRemoveEntry: (mealName: string, entryId: string) => void; onRemoveMacroEntry: (entryId: string) => void; onAddWater: (amount: number) => void; onRemoveWater: (entryId: string) => void; onToggleFavorite: (foodId: string) => void }) {
+function TodayView({ day, totals, goals, waterGoal, favoriteFoods, mostLoggedFoods, foodUsage, onOpenAdd, onOpenMacroEntry, onUpdateEntry, onRemoveEntry, onRemoveMacroEntry, onAddWater, onRemoveWater, onToggleFavorite }: { day: ReturnType<typeof emptyDay>; totals: Nutrition; goals: Goals; waterGoal: number; favoriteFoods: Food[]; mostLoggedFoods: Food[]; foodUsage: FoodUsageMap; onOpenAdd: (meal?: MealName, food?: Food) => void; onOpenMacroEntry: () => void; onUpdateEntry: (mealName: string, entryId: string, servings: number) => void; onRemoveEntry: (mealName: string, entryId: string) => void; onRemoveMacroEntry: (entryId: string) => void; onAddWater: (amount: number) => void; onRemoveWater: (entryId: string) => void; onToggleFavorite: (foodId: string) => void }) {
   const caloriesLeft = goals.calories - totals.calories;
   const progress = getProgress(totals.calories, goals.calories);
   return <>
@@ -490,8 +632,8 @@ function TodayView({ day, totals, goals, waterGoal, favoriteFoods, recentFoods, 
     <section className="section-heading macro-sources-heading"><div><p className="eyebrow">Macro accounting</p><h2>Where your macros came from</h2></div><button className="text-button" onClick={onOpenMacroEntry}><Plus size={16} /> Add outside source</button></section>
     <MacroSources day={day} onRemoveMacroEntry={onRemoveMacroEntry} />
 
-    <section className="section-heading quick-heading"><div><p className="eyebrow">Make it easy</p><h2>Quick add</h2></div><span className="section-note">Your go-to foods</span></section>
-    <section className="quick-grid">{[...favoriteFoods, ...recentFoods.filter((food) => !favoriteFoods.some((fav) => fav.id === food.id))].slice(0, 4).map((food) => <QuickFoodCard key={food.id} food={food} isFavorite={favoriteFoods.some((fav) => fav.id === food.id)} onAdd={() => onOpenAdd("Snacks", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}{favoriteFoods.length === 0 && <div className="empty-inline">Star foods you love and they’ll show up here.</div>}</section>
+    <section className="section-heading quick-heading"><div><p className="eyebrow">Make it easy</p><h2>{mostLoggedFoods.length ? "Most logged by you" : "Quick add"}</h2></div><span className="section-note">{mostLoggedFoods.length ? "Sorted from your on-device history" : "Star foods you love"}</span></section>
+    <section className="quick-grid">{[...mostLoggedFoods, ...favoriteFoods.filter((food) => !mostLoggedFoods.some((logged) => logged.id === food.id))].slice(0, 4).map((food) => <QuickFoodCard key={food.id} food={food} loggedCount={foodUsage.get(food.id)?.count ?? 0} isFavorite={favoriteFoods.some((fav) => fav.id === food.id)} onAdd={() => onOpenAdd("Snacks", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}{mostLoggedFoods.length === 0 && favoriteFoods.length === 0 && <div className="empty-inline">Log a food or star a favorite and it’ll show up here.</div>}</section>
   </>;
 }
 
@@ -510,13 +652,18 @@ function WaterCard({ entries, goal, onAdd, onRemove }: { entries: WaterEntry[]; 
 }
 
 function MacroSources({ day, onRemoveMacroEntry }: { day: ReturnType<typeof emptyDay>; onRemoveMacroEntry: (entryId: string) => void }) {
-  const sources = Object.entries(day.meals).flatMap(([meal, entries]) => entries.map((entry) => ({ id: entry.id, name: entry.foodName, detail: `${entry.locationName} · ${meal} · ${formatNumber(entry.servings)}x`, nutrition: entry.nutrition, removable: false }))).concat(day.customMacros.map((entry) => ({ id: entry.id, name: entry.name, detail: entry.sourceLabel, nutrition: entry.nutrition, removable: true })));
+  const sources = Object.entries(day.meals).flatMap(([meal, entries]) => entries.flatMap((entry) => {
+    const addOnNutrition = (entry.addOns ?? []).reduce((total, addOn) => sumNutrition(total, scaleAddOn(addOn, addOn.quantity * entry.servings)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+    const baseSource = { id: entry.id, name: entry.foodName, detail: `${entry.locationName} · ${meal} · ${formatNumber(entry.servings)}x`, nutrition: subtractNutrition(entry.nutrition, addOnNutrition), removable: false };
+    const addOnSources = (entry.addOns ?? []).map((addOn) => ({ id: `${entry.id}-${addOn.id}`, name: `+ ${addOn.name}`, detail: `${entry.foodName} · ${formatNumber(addOn.quantity * entry.servings)}x add-on`, nutrition: scaleAddOn(addOn, addOn.quantity * entry.servings), removable: false }));
+    return [baseSource, ...addOnSources];
+  })).concat(day.customMacros.map((entry) => ({ id: entry.id, name: entry.name, detail: entry.sourceLabel, nutrition: entry.nutrition, removable: true })));
   return <section className="macro-sources card">{sources.length ? <><div className="source-grid source-grid-head"><span>Source</span><span>Calories</span><span>Protein</span><span>Carbs</span><span>Fat</span><span /></div>{sources.map((source) => <div className="source-grid source-grid-row" key={source.id}><div className="source-name"><strong>{source.name}</strong><small>{source.detail}</small></div><span>{formatNumber(source.nutrition.calories)}</span><strong>{formatNumber(source.nutrition.protein)}g</strong><span>{formatNumber(source.nutrition.carbs)}g</span><span>{formatNumber(source.nutrition.fat)}g</span>{source.removable ? <button className="delete-button" onClick={() => onRemoveMacroEntry(source.id)} aria-label={`Remove ${source.name}`}><Trash2 size={14} /></button> : <span />}</div>)}</> : <div className="empty-state small"><Target size={23} /><strong>No macro sources yet</strong><span>Log a Hopkins food or add an outside source to see the breakdown.</span></div>}</section>;
 }
 
 function MealCard({ meal, entries, onOpenAdd, onUpdateEntry, onRemoveEntry }: { meal: string; entries: MealEntry[]; onOpenAdd: (meal?: MealName) => void; onUpdateEntry: (mealName: string, entryId: string, servings: number) => void; onRemoveEntry: (mealName: string, entryId: string) => void }) {
   const total = sumEntries(entries);
-  return <article className="meal-card card"><div className="meal-heading"><div className="meal-title"><span className={`meal-icon ${meal.toLowerCase()}`}><MealIcon meal={meal} /></span><div><h3>{meal}</h3><span>{entries.length ? `${formatNumber(total.calories)} kcal` : "Nothing logged yet"}</span></div></div><button className="round-add" aria-label={`Add to ${meal}`} onClick={() => onOpenAdd(meal as MealName)}><Plus size={18} /></button></div>{entries.length > 0 && <div className="entry-list">{entries.map((entry) => <div className="entry-row" key={entry.id}><div className="entry-info"><strong>{entry.foodName}</strong><span>{entry.servingSize} · {entry.locationName}</span></div><div className="entry-macros"><strong>{formatNumber(entry.nutrition.calories)}</strong><span>kcal</span></div><div className="serving-stepper"><button onClick={() => onUpdateEntry(meal, entry.id, entry.servings - 0.25)} aria-label="Decrease serving">−</button><span>{formatNumber(entry.servings)}x</span><button onClick={() => onUpdateEntry(meal, entry.id, entry.servings + 0.25)} aria-label="Increase serving">+</button></div><button className="delete-button" onClick={() => onRemoveEntry(meal, entry.id)} aria-label={`Remove ${entry.foodName}`}><Trash2 size={15} /></button></div>)}</div>}</article>;
+  return <article className="meal-card card"><div className="meal-heading"><div className="meal-title"><span className={`meal-icon ${meal.toLowerCase()}`}><MealIcon meal={meal} /></span><div><h3>{meal}</h3><span>{entries.length ? `${formatNumber(total.calories)} kcal` : "Nothing logged yet"}</span></div></div><button className="round-add" aria-label={`Add to ${meal}`} onClick={() => onOpenAdd(meal as MealName)}><Plus size={18} /></button></div>{entries.length > 0 && <div className="entry-list">{entries.map((entry) => <div className="entry-row" key={entry.id}><div className="entry-info"><strong>{entry.foodName}</strong><span>{entry.servingSize} · {entry.locationName}</span>{entry.addOns?.length ? <small className="entry-add-ons">+ {entry.addOns.map((addOn) => `${addOn.quantity > 1 ? `${formatNumber(addOn.quantity)}× ` : ""}${addOn.name}`).join(", ")}</small> : null}</div><div className="entry-macros"><strong>{formatNumber(entry.nutrition.calories)}</strong><span>kcal</span></div><div className="serving-stepper"><button onClick={() => onUpdateEntry(meal, entry.id, entry.servings - 0.25)} aria-label="Decrease serving">−</button><span>{formatNumber(entry.servings)}x</span><button onClick={() => onUpdateEntry(meal, entry.id, entry.servings + 0.25)} aria-label="Increase serving">+</button></div><button className="delete-button" onClick={() => onRemoveEntry(meal, entry.id)} aria-label={`Remove ${entry.foodName}`}><Trash2 size={15} /></button></div>)}</div>}</article>;
 }
 
 function MealIcon({ meal }: { meal: string }) {
@@ -526,27 +673,46 @@ function MealIcon({ meal }: { meal: string }) {
   return <span>✦</span>;
 }
 
-function QuickFoodCard({ food, isFavorite, onAdd, onToggleFavorite }: { food: Food; isFavorite: boolean; onAdd: () => void; onToggleFavorite: () => void }) {
-  return <button className="quick-food-card" onClick={onAdd}><div className="food-emoji">{food.tags.includes("Vegan") ? "🥬" : food.tags.includes("High protein") ? "⚡" : "🍴"}</div><div className="quick-food-info"><strong>{food.name}</strong><span>{food.calories} kcal · {food.protein}g protein</span></div><span className={`favorite-button ${isFavorite ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(); }}><Heart size={16} fill={isFavorite ? "currentColor" : "none"} /></span></button>;
+function QuickFoodCard({ food, loggedCount, isFavorite, onAdd, onToggleFavorite }: { food: Food; loggedCount: number; isFavorite: boolean; onAdd: () => void; onToggleFavorite: () => void }) {
+  return <button className="quick-food-card" onClick={onAdd}><FoodTags food={food} compact /><div className="quick-food-info"><strong>{food.name}</strong><span>{loggedCount ? `Logged ${loggedCount} time${loggedCount === 1 ? "" : "s"}` : `${food.calories} kcal · ${food.protein}g protein`}</span></div><span className={`favorite-button ${isFavorite ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(); }}><Heart size={16} fill={isFavorite ? "currentColor" : "none"} /></span></button>;
 }
 
-function FoodsView({ foods: sourceFoods, menuStatus, menuFetchedAt, favoriteFoods, onOpenAdd, onToggleFavorite }: { foods: Food[]; menuStatus: "loading" | "live" | "fallback"; menuFetchedAt: string; favoriteFoods: Food[]; onOpenAdd: (meal?: MealName, food?: Food) => void; onToggleFavorite: (foodId: string) => void }) {
+function FoodsView({ foods: sourceFoods, menuStatus, menuFetchedAt, favoriteFoods, foodUsage, onOpenAdd, onToggleFavorite }: { foods: Food[]; menuStatus: "loading" | "live" | "fallback"; menuFetchedAt: string; favoriteFoods: Food[]; foodUsage: FoodUsageMap; onOpenAdd: (meal?: MealName, food?: Food) => void; onToggleFavorite: (foodId: string) => void }) {
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("all");
-  const foods = sourceFoods.filter((food) => {
+  const [tagFilter, setTagFilter] = useState("all");
+  const foods = sortFoodsByUsage(sourceFoods.filter((food) => {
     const matchQuery = !query || `${food.name} ${food.description} ${food.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase());
-    return matchQuery && (location === "all" || food.locationId === location);
-  });
+    return matchQuery && (location === "all" || food.locationId === location) && matchesFoodTag(food, tagFilter);
+  }), foodUsage);
   const fetchedLabel = menuFetchedAt ? `Updated ${new Date(menuFetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for menu data";
-  return <><section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? "Live Nutrislice menu" : menuStatus === "loading" ? "Loading today’s menu" : "Fallback snapshot"}</div></section><div className="catalog-disclaimer">{menuStatus === "live" ? "Live menu data is pulled from Hopkins Dining’s Nutrislice feed. Recipes, portions, and allergen details can change at the dining location." : "The live menu feed was unavailable, so this is a starter snapshot for planning only. Check Hopkins Dining for today’s recipes, portions, and allergen details."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div><section className="food-toolbar"><label className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search today’s foods, tags, or ingredients" /><kbd>⌘ K</kbd></label><label className="select-field"><SlidersHorizontal size={16} /><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label></section><div className="catalog-meta"><span>{foods.length} items available · {menuStatus === "live" ? "live source" : "starter data"}</span><span>{fetchedLabel} · Nutrition values per serving</span></div><section className="food-grid">{foods.map((food) => <CatalogFoodCard key={food.id} food={food} saved={favoriteFoods.some((item) => item.id === food.id)} onAdd={() => onOpenAdd("Lunch", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}</section></>;
+  return <><section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? "Live Nutrislice menu" : menuStatus === "loading" ? "Loading today’s menu" : "Fallback snapshot"}</div></section><div className="catalog-disclaimer">{menuStatus === "live" ? "Live menu data is pulled from Hopkins Dining’s Nutrislice feed. Recipes, portions, and allergen details can change at the dining location." : "The live menu feed was unavailable, so this is a starter snapshot for planning only. Check Hopkins Dining for today’s recipes, portions, and allergen details."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div><section className="food-toolbar"><label className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search today’s foods, tags, or ingredients" /><kbd>⌘ K</kbd></label><label className="select-field"><SlidersHorizontal size={16} /><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><label className="select-field"><select aria-label="Filter by dietary tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>{FOOD_TAG_FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select><ChevronDown size={15} /></label></section><div className="catalog-meta"><span>{foods.length} items available · {menuStatus === "live" ? "live source" : "starter data"}</span><span>{foodUsage.size ? "Most logged first · " : "Alphabetical until you log food · "}{fetchedLabel} · Nutrition values per serving</span></div><section className="food-grid">{foods.map((food) => <CatalogFoodCard key={food.id} food={food} loggedCount={foodUsage.get(food.id)?.count ?? 0} saved={favoriteFoods.some((item) => item.id === food.id)} onAdd={() => onOpenAdd("Lunch", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}</section></>;
 }
 
-function CatalogFoodCard({ food, saved, onAdd, onToggleFavorite }: { food: Food; saved: boolean; onAdd: () => void; onToggleFavorite: () => void }) {
-  return <article className="catalog-food-card card"><div className="catalog-food-top"><div className="food-emoji large">{food.tags.includes("Vegan") ? "🥬" : food.tags.includes("High protein") ? "⚡" : "🍴"}</div><button className={`favorite-button ${saved ? "saved" : ""}`} onClick={onToggleFavorite}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button></div><div className="food-location">{food.locationName}</div><h3>{food.name}</h3><p>{food.description}</p><div className="nutrition-strip"><span><strong>{food.calories}</strong> kcal</span><span><strong>{food.protein}g</strong> protein</span><span><strong>{food.carbs}g</strong> carbs</span><span><strong>{food.fat}g</strong> fat</span></div><div className="food-card-footer"><span>{food.servingSize}</span><button className="small-add" onClick={onAdd}><Plus size={15} /> Log food</button></div></article>;
+function CatalogFoodCard({ food, loggedCount, saved, onAdd, onToggleFavorite }: { food: Food; loggedCount: number; saved: boolean; onAdd: () => void; onToggleFavorite: () => void }) {
+  return <article className="catalog-food-card card"><div className="catalog-food-top"><FoodTags food={food} /><button className={`favorite-button ${saved ? "saved" : ""}`} onClick={onToggleFavorite}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button></div><div className="food-location">{food.locationName}</div><h3>{food.name}</h3><p>{food.description}</p><div className="nutrition-strip"><span><strong>{food.calories}</strong> kcal</span><span><strong>{food.protein}g</strong> protein</span><span><strong>{food.carbs}g</strong> carbs</span><span><strong>{food.fat}g</strong> fat</span></div><div className="food-card-footer"><span>{loggedCount ? `Logged ${loggedCount}×` : food.servingSize}</span><button className="small-add" onClick={onAdd}><Plus size={15} /> Log food</button></div></article>;
 }
 
-function AddFoodModal({ foods, meal, query, location, selectedFood, servings, setQuery, setLocation, setMeal, setSelectedFood, setServings, onAdd, onClose, onToggleFavorite, favoriteIds }: { foods: Food[]; meal: MealName; query: string; location: string; selectedFood: Food | null; servings: number; setQuery: (value: string) => void; setLocation: (value: string) => void; setMeal: (value: MealName) => void; setSelectedFood: (food: Food | null) => void; setServings: (value: number) => void; onAdd: () => void; onClose: () => void; onToggleFavorite: (foodId: string) => void; favoriteIds: string[] }) {
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="food-modal" role="dialog" aria-modal="true" aria-labelledby="add-food-title"><div className="modal-header"><div><p className="eyebrow">Build your log</p><h2 id="add-food-title">Add a food</h2></div><button className="close-button" onClick={onClose}><X size={19} /></button></div><div className="modal-controls"><label className="search-field"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the dining catalog" /></label><label className="select-field"><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div><div className="meal-tabs">{MEALS.map((item) => <button key={item} className={meal === item ? "active" : ""} onClick={() => setMeal(item)}>{item}</button>)}</div><div className="food-modal-list">{foods.map((food) => <button key={food.id} className={`modal-food-row ${selectedFood?.id === food.id ? "selected" : ""}`} onClick={() => setSelectedFood(food)}><span className="food-emoji">{food.tags.includes("Vegan") ? "🥬" : food.tags.includes("High protein") ? "⚡" : "🍴"}</span><span className="modal-food-copy"><strong>{food.name}</strong><small>{food.locationName} · {food.servingSize}</small></span><span className="modal-food-kcal">{food.calories}<small> kcal</small></span><span className={`favorite-button ${favoriteIds.includes(food.id) ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(food.id); }}><Heart size={16} fill={favoriteIds.includes(food.id) ? "currentColor" : "none"} /></span></button>)}{foods.length === 0 && <div className="empty-state small"><Search size={24} /><strong>No foods found</strong><span>Try a different search or location.</span></div>}</div>{selectedFood && <div className="selected-food-panel"><div><strong>{selectedFood.name}</strong><span>{selectedFood.calories} kcal · {selectedFood.protein}g protein per {selectedFood.servingSize}</span></div><div className="serving-control"><span>Servings</span><div className="serving-stepper large"><button onClick={() => setServings(Math.max(0.25, servings - 0.25))}>−</button><strong>{formatNumber(servings)}</strong><button onClick={() => setServings(Math.min(20, servings + 0.25))}>+</button></div></div><button className="primary-button modal-add" onClick={onAdd}><Plus size={17} /> Add to {meal.toLowerCase()}</button></div>}</div></div>;
+function AddFoodModal({ foods, meal, query, location, tagFilter, selectedFood, servings, foodUsage, setQuery, setLocation, setTagFilter, setMeal, setSelectedFood, setServings, onAdd, onClose, onToggleFavorite, favoriteIds }: { foods: Food[]; meal: MealName; query: string; location: string; tagFilter: string; selectedFood: Food | null; servings: number; foodUsage: FoodUsageMap; setQuery: (value: string) => void; setLocation: (value: string) => void; setTagFilter: (value: string) => void; setMeal: (value: MealName) => void; setSelectedFood: (food: Food | null) => void; setServings: (value: number) => void; onAdd: (addOns: MealAddOn[]) => void; onClose: () => void; onToggleFavorite: (foodId: string) => void; favoriteIds: string[] }) {
+  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({});
+  const addOnOptions = selectedFood ? addOnsForFood(selectedFood) : [];
+  const chosenAddOns = addOnOptions.filter((addOn) => (selectedAddOns[addOn.id] ?? 0) > 0).map((addOn) => ({ ...addOn, quantity: selectedAddOns[addOn.id] }));
+  const selectedNutrition = selectedFood ? nutritionForMeal(selectedFood, servings, chosenAddOns) : null;
+
+  function chooseFood(food: Food) {
+    setSelectedFood(food);
+    setSelectedAddOns({});
+  }
+
+  function toggleAddOn(addOn: FoodAddOn) {
+    setSelectedAddOns((current) => ({ ...current, [addOn.id]: current[addOn.id] ? 0 : 1 }));
+  }
+
+  function changeAddOnQuantity(addOn: FoodAddOn, amount: number) {
+    setSelectedAddOns((current) => ({ ...current, [addOn.id]: Math.min(4, Math.max(0, Math.round(amount * 4) / 4)) }));
+  }
+
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="food-modal" role="dialog" aria-modal="true" aria-labelledby="add-food-title"><div className="modal-header"><div><p className="eyebrow">Build your log</p><h2 id="add-food-title">Add a food</h2></div><button className="close-button" onClick={onClose}><X size={19} /></button></div><div className="modal-controls"><label className="search-field"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the dining catalog" /></label><label className="select-field"><select value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{NUTRISLICE_LOCATIONS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><label className="select-field"><select aria-label="Filter by dietary tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>{FOOD_TAG_FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select><ChevronDown size={15} /></label></div><div className="meal-tabs">{MEALS.map((item) => <button key={item} className={meal === item ? "active" : ""} onClick={() => setMeal(item)}>{item}</button>)}</div><p className="food-sort-note">{foodUsage.size ? "Most logged by you appears first." : "Your most logged foods will appear first after you start logging."}</p><div className="food-modal-list">{foods.map((food) => { const loggedCount = foodUsage.get(food.id)?.count ?? 0; return <button key={food.id} className={`modal-food-row ${selectedFood?.id === food.id ? "selected" : ""}`} onClick={() => chooseFood(food)}><FoodTags food={food} compact /><span className="modal-food-copy"><strong>{food.name}</strong><small>{food.locationName} · {food.servingSize}{loggedCount ? ` · Logged ${loggedCount}×` : ""}</small></span><span className="modal-food-kcal">{food.calories}<small> kcal</small></span><span className={`favorite-button ${favoriteIds.includes(food.id) ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(food.id); }}><Heart size={16} fill={favoriteIds.includes(food.id) ? "currentColor" : "none"} /></span></button>; })}{foods.length === 0 && <div className="empty-state small"><Search size={24} /><strong>No foods found</strong><span>Try a different search or location.</span></div>}</div>{selectedFood && addOnOptions.length > 0 && <section className="add-on-panel"><div className="add-on-heading"><div><strong>Customize your {selectedFood.name}</strong><span>Optional add-ons · quantities are per serving</span></div><span className="add-on-estimate">Standard estimates</span></div>{(["protein", "topping"] as const).map((category) => <div className="add-on-group" key={category}><span className="add-on-group-label">{category === "protein" ? "Add protein" : "Toppings"}</span>{addOnOptions.filter((addOn) => addOn.category === category).map((addOn) => { const quantity = selectedAddOns[addOn.id] ?? 0; return <div className={`add-on-option ${quantity ? "selected" : ""}`} key={addOn.id}><button type="button" className="add-on-toggle" onClick={() => toggleAddOn(addOn)}><span className="add-on-check">{quantity ? "✓" : ""}</span><span className="add-on-copy"><strong>{addOn.name}</strong><small>{addOn.servingSize} · +{addOn.calories} kcal · +{formatNumber(addOn.protein)}g protein</small></span></button>{quantity > 0 && <div className="add-on-stepper"><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity - 0.25)} aria-label={`Decrease ${addOn.name}`}>−</button><span>{formatNumber(quantity)}x</span><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity + 0.25)} aria-label={`Increase ${addOn.name}`}>+</button></div>}</div>; })}</div>)}</section>}{selectedFood && <div className="selected-food-panel"><div><strong>{selectedFood.name}</strong><span>{selectedNutrition ? `${formatNumber(selectedNutrition.calories)} kcal · ${formatNumber(selectedNutrition.protein)}g protein` : ""} per {selectedFood.servingSize}{chosenAddOns.length ? ` · ${chosenAddOns.length} add-on${chosenAddOns.length === 1 ? "" : "s"}` : ""}</span></div><div className="serving-control"><span>Servings</span><div className="serving-stepper large"><button type="button" onClick={() => setServings(Math.max(0.25, servings - 0.25))}>−</button><strong>{formatNumber(servings)}</strong><button type="button" onClick={() => setServings(Math.min(20, servings + 0.25))}>+</button></div></div><button type="button" className="primary-button modal-add" onClick={() => onAdd(chosenAddOns)}><Plus size={17} /> Add to {meal.toLowerCase()}</button></div>}</div></div>;
 }
 
 function MacroEntryModal({ onAdd, onClose }: { onAdd: (entry: Omit<MacroEntry, "id" | "createdAt">) => void; onClose: () => void }) {

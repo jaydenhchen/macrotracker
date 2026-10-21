@@ -74,6 +74,18 @@ function slugValue(value: unknown) {
   return stringValue(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+function schoolSlug(value: unknown) {
+  const raw = stringValue(value);
+  const lastPathPart = raw.split("/").filter(Boolean).pop() || raw;
+  return slugValue(lastPathPart);
+}
+
+function menuTypeSlug(value: unknown) {
+  const slug = slugValue(value);
+  const match = /(?:^|-)(breakfast|brunch|lunch|dinner|late-night|all-day)(?:-(\d+))?$/.exec(slug);
+  return match ? `${match[1]}${match[2] ? `-${match[2]}` : ""}` : slug;
+}
+
 function normalizedText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -92,7 +104,7 @@ function directoryEntries(payload: unknown) {
 function directorySchool(entry: JsonRecord) {
   const nested = record(entry.school);
   const merged = nested ? { ...entry, ...nested } : entry;
-  const slug = slugValue(merged.slug ?? merged.school_slug ?? merged.school ?? merged.path ?? merged.id);
+  const slug = schoolSlug(merged.slug ?? merged.school_slug ?? merged.school ?? merged.path ?? merged.id);
   const name = stringValue(merged.name ?? merged.title ?? merged.display_name ?? merged.label);
   return { merged, slug, name };
 }
@@ -101,9 +113,9 @@ function directoryMealTypes(entry: JsonRecord) {
   const raw = entry.active_menu_types ?? entry.menu_types ?? entry.menuTypes ?? entry.menu_type_options ?? entry.menus;
   if (!Array.isArray(raw)) return [];
   return Array.from(new Set(raw.map((value) => {
-    if (typeof value === "string") return slugValue(value);
+    if (typeof value === "string") return menuTypeSlug(value);
     const item = record(value);
-    return slugValue(item?.slug ?? item?.menu_type ?? item?.name ?? item?.title);
+    return menuTypeSlug(item?.name ?? item?.menu_type ?? item?.title ?? item?.slug);
   }).filter(Boolean)));
 }
 
@@ -221,10 +233,10 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
 
   const nutrition = record(rawFood.rounded_nutrition_info) ?? record(rawFood.nutrition_info) ?? record(item.rounded_nutrition_info) ?? {};
   const servingInfo = record(rawFood.serving_size_info) ?? record(item.serving_size_info) ?? {};
-  const icons = iconNames(rawFood);
+  const icons = iconNames({ ...item, ...rawFood });
   const explicitAllergens = stringList(rawFood.allergens ?? item.allergens ?? rawFood.allergen_icons);
   const allergens = Array.from(new Set([...explicitAllergens, ...icons.filter((icon) => ALLERGEN_NAMES.has(icon.toLowerCase()))]));
-  const tags = Array.from(new Set([...icons, stringValue(rawFood.food_category ?? item.category)].filter(Boolean)));
+  const tags = Array.from(new Set([...icons, stringValue(rawFood.food_category ?? item.category), ...stringList(item.tags)].filter(Boolean)));
   const rawId = rawFood.id ?? rawFood.synced_id ?? item.id ?? `${location.id}-${mealType}-${slug(name)}`;
   const servingAmount = servingInfo.serving_size_amount ?? rawFood.serving_size_amount ?? item.serving_size_amount ?? "1";
   const servingUnit = servingInfo.serving_size_unit ?? rawFood.serving_size_unit ?? item.serving_size_unit ?? "serving";
@@ -254,7 +266,10 @@ export function makeMenuResponse(date: string, results: Array<{ location: Nutris
   const uniqueFoods = Array.from(new Map(foods.map((food) => [food.id, food])).values());
   const locations = HOPKINS_LOCATIONS.map((location) => ({
     ...location,
-    meals: MENU_TYPES.map((mealType) => ({
+    meals: Array.from(new Set([
+      ...MENU_TYPES,
+      ...results.filter((result) => result.location.id === location.id).map((result) => result.mealType),
+    ])).map((mealType) => ({
       id: `${location.id}-${mealType}`,
       name: titleCase(mealType),
       foods: uniqueFoods.filter((food) => food.locationId === location.id && food.mealPeriods.includes(titleCase(mealType))),

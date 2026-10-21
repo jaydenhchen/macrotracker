@@ -1,4 +1,4 @@
-import { DayLog, MacroEntry, MealEntry, TrackerState, UserProfile, WaterEntry, WeightEntry } from "./types";
+import { DayLog, MacroEntry, MealAddOn, MealEntry, TrackerState, UserProfile, WaterEntry, WeightEntry } from "./types";
 
 const DB_NAME = "bluejay-fuel";
 const STORE_NAME = "tracker";
@@ -23,9 +23,27 @@ function finiteNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function normalizeMealAddOn(value: unknown): MealAddOn | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string" || (value.category !== "protein" && value.category !== "topping")) return null;
+  const nutrition = isRecord(value.nutrition) ? value.nutrition : value;
+  const quantity = Math.min(20, Math.max(0.25, finiteNumber(value.quantity, 1)));
+  return {
+    id: value.id,
+    name: value.name,
+    category: value.category,
+    servingSize: typeof value.servingSize === "string" && value.servingSize ? value.servingSize : "1 serving",
+    quantity,
+    calories: finiteNumber(nutrition.calories, 0),
+    protein: finiteNumber(nutrition.protein, 0),
+    carbs: finiteNumber(nutrition.carbs, 0),
+    fat: finiteNumber(nutrition.fat, 0),
+  };
+}
+
 function normalizeMealEntry(value: unknown): MealEntry | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.foodId !== "string" || typeof value.foodName !== "string" || typeof value.servingSize !== "string" || typeof value.locationName !== "string") return null;
   const nutrition = isRecord(value.nutrition) ? value.nutrition : {};
+  const addOns = Array.isArray(value.addOns) ? value.addOns.map(normalizeMealAddOn).filter((addOn): addOn is MealAddOn => Boolean(addOn)) : undefined;
   return {
     id: value.id,
     foodId: value.foodId,
@@ -39,6 +57,7 @@ function normalizeMealEntry(value: unknown): MealEntry | null {
       fat: finiteNumber(nutrition.fat, 0),
     },
     locationName: value.locationName,
+    ...(addOns?.length ? { addOns } : {}),
   };
 }
 
