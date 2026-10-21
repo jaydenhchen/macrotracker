@@ -35,6 +35,19 @@ test('every location uses the exact directory menu ID and a Sunday week, without
   assert.match(result.foods.find((item) => item.locationId === 'hopkins-cafe').menuUrl, /hopkins-cafe\/hopkins-cafe-lunch\/2026\/10\/21$/);
 });
 
+test('the same named food at one location appears once and keeps every meal period', async () => {
+  const twoMeals = [{ slug: 'hopkins-cafe', name: 'Hopkins Café', active_menu_types: [
+    { slug: 'hopkins-cafe-lunch', name: 'Lunch' }, { slug: 'hopkins-cafe-dinner', name: 'Dinner' },
+  ] }];
+  global.fetch = async (url) => url.includes('/schools/') ? json(twoMeals) : json({ days: [{ date: '2026-10-21', menu_items: [{ food }] }] });
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(result.foods.length, 1);
+  assert.deepEqual(result.foods[0].mealPeriods, ['Lunch', 'Dinner']);
+  assert.deepEqual(result.foods[0].menuTypes, ['hopkins-cafe-lunch', 'hopkins-cafe-dinner']);
+  assert.equal(result.locations[0].meals.find((meal) => meal.name === 'Lunch').foods.length, 1);
+  assert.equal(result.locations[0].meals.find((meal) => meal.name === 'Dinner').foods.length, 1);
+});
+
 test('empty or malformed directory produces a useful error and no fictional foods', async () => {
   global.fetch = async () => json([]);
   const result = await fetchMenu('2026-10-21');
@@ -50,6 +63,25 @@ test('missing macros are explicitly flagged and station headings never become fo
   assert.deepEqual(item.missingNutrition, ['protein', 'carbs', 'fat']);
   assert.equal(item.calories, 0);
   assert.equal(extractMenuItems(weekly, '2026-10-22').length, 0);
+});
+
+test('no added sugar is tagged only when added sugar is explicitly zero; natural sugar is allowed', () => {
+  const noAdded = normalizeMenuItem({ food: { id: 11, name: 'Fruit cup', rounded_nutrition_info: { g_sugar: 12, g_added_sugar: 0 } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
+  const hasAdded = normalizeMenuItem({ food: { id: 12, name: 'Sweetened oats', rounded_nutrition_info: { g_sugar: 12, g_added_sugar: 4 } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
+  const unknown = normalizeMenuItem({ food: { id: 13, name: 'Unknown sugar', rounded_nutrition_info: { g_sugar: 0, g_added_sugar: null } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
+  const conflicting = normalizeMenuItem({ food: { id: 14, name: 'Conflicting label', rounded_nutrition_info: { g_added_sugar: 3 }, icons: { food_icons: [{ synced_name: 'No Added Sugar' }] } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
+  assert.equal(noAdded.addedSugar, 0);
+  assert.ok(noAdded.tags.includes('No Added Sugar'));
+  assert.equal(hasAdded.addedSugar, 4);
+  assert.ok(!hasAdded.tags.includes('No Added Sugar'));
+  assert.equal(unknown.addedSugar, null);
+  assert.ok(!unknown.tags.includes('No Added Sugar'));
+  assert.ok(!conflicting.tags.includes('No Added Sugar'));
+  const { matchesFoodTag } = require('../lib/food-filters.ts');
+  assert.equal(matchesFoodTag(noAdded, 'no-added-sugar'), true);
+  assert.equal(matchesFoodTag(hasAdded, 'no-added-sugar'), false);
+  assert.equal(matchesFoodTag(unknown, 'no-added-sugar'), false);
+  assert.equal(matchesFoodTag(conflicting, 'no-added-sugar'), false);
 });
 
 test('rate limits and malformed responses preserve other locations; empty menus are not failures', async () => {
@@ -133,7 +165,8 @@ test('realistic menus larger than four MB are retained with bounded concurrency'
   };
   const result = await fetchMenu('2026-10-21');
   assert.equal(result.errors.length, 0);
-  assert.equal(result.foods.length, 3);
+  assert.equal(result.foods.length, 1);
+  assert.equal(result.foods[0].menuTypes.length, 3);
   assert.ok(peak <= 2);
 });
 
@@ -209,7 +242,7 @@ test('failed individual meals can use saved foods while published-empty location
   let live = { ...stored, fetchedAt: new Date().toISOString(), partial: true, foods: [breakfast, stored.foods[1]], errors: [{ locationId: 'hopkins-cafe', mealType: 'hopkins-cafe-lunch', message: 'upstream status 429' }] };
   global.fetch = async (url) => url.startsWith('https:') ? json(live) : json({}, 404);
   const menu = await fetchTodayMenu('2026-10-21');
-  assert.equal(menu.foods.length, 3);
+  assert.equal(menu.foods.length, 2);
   assert.equal(menu.mode, 'cached');
   live = { ...live, partial: false, foods: [stored.foods[1]], errors: [], locations: stored.locations.map((location) => location.id === 'hopkins-cafe' ? { ...location, status: 'empty' } : location) };
   const empty = await fetchTodayMenu('2026-10-21');

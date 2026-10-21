@@ -16,6 +16,8 @@ export type Food = Nutrition & {
   menuUrl?: string;
   mealPeriods: string[];
   menuType?: string;
+  menuTypes?: string[];
+  addedSugar?: number | null;
   servingSize: string;
   allergens: string[];
   tags: string[];
