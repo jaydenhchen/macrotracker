@@ -71,7 +71,11 @@ function numberValue(value: unknown) {
 }
 
 function dateMatches(value: unknown, date: string) {
-  return typeof value === "string" && value.slice(0, 10) === date;
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed.slice(0, 10) === date) return true;
+  const slashDate = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+  return Boolean(slashDate && `${slashDate[3]}-${slashDate[1].padStart(2, "0")}-${slashDate[2].padStart(2, "0")}` === date);
 }
 
 function arrayRecords(value: unknown) {
@@ -82,9 +86,13 @@ function itemsFromContainer(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return arrayRecords(value);
   const container = record(value);
   if (!container) return [];
-  for (const key of ["menu_items", "items", "food_items"]) {
+  for (const key of ["menu_items", "menuItems", "items", "food_items", "foods"]) {
     const items = arrayRecords(container[key]);
     if (items.length || Array.isArray(container[key])) return items;
+  }
+  for (const key of ["menu", "day"]) {
+    const nested = itemsFromContainer(container[key]);
+    if (nested.length) return nested;
   }
   return [];
 }
