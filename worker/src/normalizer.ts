@@ -165,7 +165,9 @@ function itemsFromContainer(value: unknown): JsonRecord[] {
   const container = record(value);
   if (!container) return [];
   for (const key of ["menu_items", "menuItems", "items", "food_items", "foods"]) {
+    if (key in container && !Array.isArray(container[key])) throw new Error("Nutrislice returned malformed menu items for this date");
     const items = arrayRecords(container[key]);
+    if (Array.isArray(container[key]) && items.length !== container[key].length) throw new Error("Nutrislice returned invalid menu item records");
     if (items.length || Array.isArray(container[key])) return withStations(items);
   }
   for (const key of ["menu", "day"]) {

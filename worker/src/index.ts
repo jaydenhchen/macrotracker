@@ -14,7 +14,7 @@ const DEFAULT_CACHE_TTL = 300;
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DATE_YEAR = 2200;
 // Bump this whenever target resolution changes so a previously partial menu cannot mask a fix.
-const CACHE_SCHEMA = "6";
+const CACHE_SCHEMA = "7";
 
 function corsHeaders(request: Request, env: Env) {
   const origin = request.headers.get("Origin");
@@ -83,7 +83,7 @@ async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
       const chunk = await reader.read();
       if (chunk.done) break;
       bytes += chunk.value.byteLength;
-      if (bytes > 4_000_000) {
+      if (bytes > 16_000_000) {
         await reader.cancel();
         throw new Error("upstream response was too large");
       }
@@ -140,7 +140,9 @@ export async function fetchMenu(date: string, env: Env = {}) {
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(6, jobs.length) }, consume));
+  // Large weekly menus can exceed four MB. Limit concurrent bodies so allowing
+  // real menus does not multiply peak memory across six large JSON responses.
+  await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, consume));
   return makeMenuResponse(date, results, errors, new Date().toISOString(), targets);
 }
 

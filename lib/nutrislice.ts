@@ -57,6 +57,7 @@ function normalizeFood(value: unknown): Food | null {
     locationName: item.locationName,
     menuUrl: typeof item.menuUrl === "string" ? item.menuUrl : undefined,
     mealPeriods: stringArray(item.mealPeriods),
+    menuType: typeof item.menuType === "string" ? item.menuType : undefined,
     servingSize: typeof item.servingSize === "string" && item.servingSize ? item.servingSize : "1 serving",
     allergens: stringArray(item.allergens),
     tags: stringArray(item.tags),
@@ -81,7 +82,7 @@ function menuEndpoint(date: string) {
   return endpoint.toString();
 }
 
-export type MenuLocation = { id: string; name: string; menuUrl: string; status: "available" | "empty" | "unavailable" };
+export type MenuLocation = { id: string; name: string; menuUrl: string; status: "available" | "empty" | "unavailable"; cached?: boolean; unavailableMeals?: string[] };
 export type MenuData = { foods: Food[]; locations: MenuLocation[]; fetchedAt: string; mode: "live" | "cached"; partial: boolean };
 
 function parseMenu(payload: unknown, date: string, mode: MenuData["mode"]): MenuData {
@@ -96,10 +97,15 @@ function parseMenu(payload: unknown, date: string, mode: MenuData["mode"]): Menu
     const location = record(value);
     if (!location || typeof location.id !== "string" || typeof location.name !== "string" || typeof location.menuUrl !== "string") throw new Error("Invalid menu location");
     if (!["available", "empty", "unavailable"].includes(String(location.status))) throw new Error("Invalid menu status");
-    return { id: location.id, name: location.name, menuUrl: location.menuUrl, status: location.status as MenuLocation["status"] };
+    const unavailableMeals = Array.from(new Set([...stringArray(location.unavailableMeals), ...(Array.isArray(root.errors) ? root.errors.flatMap((value) => {
+      const error = record(value);
+      if (!error) return [];
+      return error.locationId === location.id && typeof error.mealType === "string" ? [error.mealType] : [];
+    }) : [])]));
+    return { id: location.id, name: location.name, menuUrl: location.menuUrl, status: location.status as MenuLocation["status"], ...(location.cached === true ? { cached: true } : {}), ...(unavailableMeals.length ? { unavailableMeals } : {}) };
   });
   if (foods.some((food) => !locations.some((location) => location.id === food.locationId))) throw new Error("Unknown food location");
-  return { foods, locations, fetchedAt, mode, partial: root.partial === true };
+  return { foods, locations, fetchedAt, mode: locations.some((location) => location.cached) ? "cached" : mode, partial: root.partial === true };
 }
 
 async function readMenu(url: string, signal: AbortSignal | undefined, timeout: number) {
@@ -118,31 +124,74 @@ async function readMenu(url: string, signal: AbortSignal | undefined, timeout: n
   }
 }
 
+function savedMenu(key: string, date: string): MenuData | null {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? parseMenu(JSON.parse(stored), date, "cached") : null;
+  } catch { return null; }
+}
+
+async function publishedMenu(date: string, signal?: AbortSignal): Promise<MenuData | null> {
+  try {
+    const path = `${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/menus/${date}.json`;
+    return parseMenu(await readMenu(path, signal, 5000), date, "cached");
+  } catch {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return null;
+  }
+}
+
+function preserveFailedLocations(live: MenuData, candidates: MenuData[]): MenuData {
+  const foods = [...live.foods];
+  let oldestFetch = live.fetchedAt;
+  let repaired = false;
+  const locations = live.locations.map((location) => {
+    const failures: Array<string | undefined> = location.status === "unavailable" ? [undefined] : location.unavailableMeals ?? [];
+    let locationRepaired = false;
+    for (const mealType of failures) {
+      const matches = (food: Food) => food.locationId === location.id && (mealType === undefined || food.menuType === mealType);
+      const candidate = candidates.find((menu) => menu.foods.some(matches));
+      if (!candidate) continue;
+      repaired = true;
+      locationRepaired = true;
+      foods.push(...candidate.foods.filter(matches));
+      if (Date.parse(candidate.fetchedAt) < Date.parse(oldestFetch)) oldestFetch = candidate.fetchedAt;
+    }
+    return locationRepaired ? { ...location, status: "available" as const, cached: true } : location;
+  });
+  return repaired ? { ...live, foods: Array.from(new Map(foods.map((food) => [food.id, food])).values()), locations, fetchedAt: oldestFetch, mode: "cached", partial: true } : live;
+}
+
+function storeMenu(key: string, date: string, menu: MenuData) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ ...menu, ok: true, source: "hopkins-nutrislice", schemaVersion: 6, date }));
+  } catch { /* Storage may be full or disabled. */ }
+}
+
 export async function fetchTodayMenu(date: string, signal?: AbortSignal): Promise<MenuData> {
   const key = `bluejay-menu-v6:${date}`;
+  const stored = savedMenu(key, date);
   const endpoint = menuEndpoint(date);
   if (endpoint) {
     try {
       const payload = await readMenu(endpoint, signal, 16000);
-      const menu = parseMenu(payload, date, "live");
-      try { localStorage.setItem(key, JSON.stringify(payload)); } catch { /* Storage may be full or disabled. */ }
+      const live = parseMenu(payload, date, "live");
+      let menu = live;
+      if (live.locations.some((location) => location.status === "unavailable" || location.unavailableMeals?.length)) {
+        const published = await publishedMenu(date, signal);
+        const candidates = [stored, published].filter((candidate): candidate is MenuData => candidate !== null)
+          .sort((left, right) => Date.parse(right.fetchedAt) - Date.parse(left.fetchedAt));
+        menu = preserveFailedLocations(live, candidates);
+      }
+      storeMenu(key, date, menu);
       return menu;
     } catch {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     }
   }
   // Only genuine, dated Nutrislice data is eligible for fallback.
-  const candidates: MenuData[] = [];
-  try {
-    const stored = localStorage.getItem(key);
-    if (stored) candidates.push(parseMenu(JSON.parse(stored), date, "cached"));
-  } catch { /* Invalid cache is ignored. */ }
-  try {
-    const path = `${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/menus/${date}.json`;
-    candidates.push(parseMenu(await readMenu(path, signal, 5000), date, "cached"));
-  } catch {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  }
+  const published = await publishedMenu(date, signal);
+  const candidates = [stored, published].filter((candidate): candidate is MenuData => candidate !== null);
   if (candidates.length) return candidates.sort((a, b) => Date.parse(b.fetchedAt) - Date.parse(a.fetchedAt))[0];
   throw new Error("Hopkins menus are unavailable for this date. Open the official menu or try again.");
 }

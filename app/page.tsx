@@ -29,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { DEFAULT_STATE, dateKey, exportState, loadState, normalizeState, saveState } from "@/lib/storage";
+import { mealNutritionBasis, nutritionForMeal, resizeMealEntry } from "@/lib/nutrition";
 import { fetchTodayMenu, NUTRISLICE_LOCATIONS, type MenuLocation } from "@/lib/nutrislice";
 import { DayLog, Food, FoodAddOn, Goals, MacroEntry, MealAddOn, MealEntry, MealName, MEALS, Nutrition, TrackerState, UserProfile, WaterEntry, WeightEntry } from "@/lib/types";
 
@@ -91,15 +92,6 @@ function formatNumber(value: number) {
   return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(1);
 }
 
-function scaleNutrition(food: Food, servings: number): Nutrition {
-  return {
-    calories: Math.round(food.calories * servings),
-    protein: Math.round(food.protein * servings * 10) / 10,
-    carbs: Math.round(food.carbs * servings * 10) / 10,
-    fat: Math.round(food.fat * servings * 10) / 10,
-  };
-}
-
 function sumNutrition(first: Nutrition, second: Nutrition): Nutrition {
   return {
     calories: first.calories + second.calories,
@@ -125,10 +117,6 @@ function scaleAddOn(addOn: FoodAddOn, quantity: number): Nutrition {
     carbs: Math.round(addOn.carbs * quantity * 10) / 10,
     fat: Math.round(addOn.fat * quantity * 10) / 10,
   };
-}
-
-function nutritionForMeal(food: Food, servings: number, addOns: MealAddOn[] = []): Nutrition {
-  return addOns.reduce((total, addOn) => sumNutrition(total, scaleAddOn(addOn, addOn.quantity * servings)), scaleNutrition(food, servings));
 }
 
 function addOnsForFood(food: Food, foods: Food[]): FoodAddOn[] {
@@ -250,9 +238,9 @@ function sortFoods(foods: Food[], usage: FoodUsageMap, sortBy: string) {
 }
 
 function foodSnapshotFromEntry(entry: MealEntry): Food {
-  const servings = Math.max(entry.servings, 0.25);
+  const servings = entry.nutritionPerServing ? 1 : Math.max(entry.servings, 0.25);
   const addOnNutrition = (entry.addOns ?? []).reduce((total, addOn) => sumNutrition(total, scaleAddOn(addOn, addOn.quantity * servings)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
-  const baseNutrition = subtractNutrition(entry.nutrition, addOnNutrition);
+  const baseNutrition = subtractNutrition(entry.nutritionPerServing ?? entry.nutrition, addOnNutrition);
   return {
     id: entry.foodId,
     name: entry.foodName,
@@ -352,6 +340,7 @@ export default function Page() {
   const [menuRetry, setMenuRetry] = useState(0);
   const [menuStatus, setMenuStatus] = useState<"loading" | "live" | "cached" | "unavailable">("loading");
   const [menuFetchedAt, setMenuFetchedAt] = useState("");
+  const [menuPartial, setMenuPartial] = useState(false);
   const [toast, setToast] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
 
@@ -381,6 +370,7 @@ export default function Page() {
     setMenuStatus("loading");
     setMenuFoods([]);
     setMenuFetchedAt("");
+    setMenuPartial(false);
     setMenuLocations(NUTRISLICE_LOCATIONS.map((location) => ({ ...location, status: "unavailable" })));
     setSelectedFood(null);
     fetchTodayMenu(selectedDate, controller.signal).then((result) => {
@@ -389,6 +379,7 @@ export default function Page() {
       setMenuLocations(result.locations);
       setMenuStatus(result.mode);
       setMenuFetchedAt(result.fetchedAt);
+      setMenuPartial(result.partial);
     }).catch(() => {
       if (controller.signal.aborted) return;
       setMenuFoods([]);
@@ -435,6 +426,7 @@ export default function Page() {
       servingSize: selectedFood.servingSize,
       servings,
       nutrition: nutritionForMeal(selectedFood, servings, addOns),
+      nutritionPerServing: mealNutritionBasis(selectedFood, addOns),
       locationName: selectedFood.locationName,
       ...(addOns.length ? { addOns } : {}),
     };
@@ -451,17 +443,7 @@ export default function Page() {
         ...current.meals,
         [mealName]: (current.meals[mealName] ?? []).map((entry) => {
           if (entry.id !== entryId) return entry;
-          const base = Math.max(entry.servings, 0.25);
-          return {
-            ...entry,
-            servings: safeServings,
-            nutrition: {
-              calories: Math.round((entry.nutrition.calories / base) * safeServings),
-              protein: Math.round((entry.nutrition.protein / base) * safeServings * 10) / 10,
-              carbs: Math.round((entry.nutrition.carbs / base) * safeServings * 10) / 10,
-              fat: Math.round((entry.nutrition.fat / base) * safeServings * 10) / 10,
-            },
-          };
+          return resizeMealEntry(entry, safeServings);
         }),
       },
     }));
@@ -607,7 +589,7 @@ export default function Page() {
 
         <div className="page-wrap">
           {activeView === "today" && <TodayView day={day} totals={totals} goals={state.goals} waterGoal={state.waterGoal} favoriteFoods={favoriteFoods} mostLoggedFoods={mostLoggedFoods} foodUsage={foodUsage} onOpenAdd={openAddFood} onOpenMacroEntry={() => setMacroEntryOpen(true)} onUpdateEntry={updateEntry} onRemoveEntry={removeEntry} onRemoveMacroEntry={removeMacroEntry} onAddWater={addWater} onRemoveWater={removeWater} onToggleFavorite={toggleFavorite} />}
-          {activeView === "foods" && <FoodsView foods={menuFoods} locations={menuLocations} onRetry={() => setMenuRetry((current) => current + 1)} menuStatus={menuStatus} menuFetchedAt={menuFetchedAt} favoriteFoods={favoriteFoods} foodUsage={foodUsage} onOpenAdd={openAddFood} onToggleFavorite={toggleFavorite} />}
+          {activeView === "foods" && <FoodsView foods={menuFoods} partial={menuPartial} locations={menuLocations} onRetry={() => setMenuRetry((current) => current + 1)} menuStatus={menuStatus} menuFetchedAt={menuFetchedAt} favoriteFoods={favoriteFoods} foodUsage={foodUsage} onOpenAdd={openAddFood} onToggleFavorite={toggleFavorite} />}
           {activeView === "weight" && <WeightView state={state} selectedDate={selectedDate} weightDraft={weightDraft} weightRange={weightRange} setWeightDraft={setWeightDraft} setWeightRange={setWeightRange} onUnitChange={(unit) => setState((current) => ({ ...current, preferredWeightUnit: unit }))} onAddWeight={addWeight} onDeleteWeight={(id) => setState((current) => ({ ...current, weights: current.weights.filter((entry) => entry.id !== id) }))} />}
           {activeView === "settings" && <SettingsView state={state} calcWeight={calcWeight} calcWorkoutDays={calcWorkoutDays} calcGoal={calcGoal} setCalcWeight={setCalcWeight} setCalcWorkoutDays={setCalcWorkoutDays} setCalcGoal={setCalcGoal} onApplyGuided={applyGuidedGoals} onOpenOnboarding={() => { setOnboardingDraft(profileToDraft(state.profile, state.waterGoal)); setOnboardingStep(1); setOnboardingOpen(true); }} onUpdateGoal={updateGoal} onExport={() => exportState(state)} onImport={() => importRef.current?.click()} />}
         </div>
@@ -730,7 +712,7 @@ function TagFilterMenu({ selected, onChange }: { selected: string[]; onChange: (
   </div>;
 }
 
-function FoodsView({ foods: sourceFoods, locations, onRetry, menuStatus, menuFetchedAt, favoriteFoods, foodUsage, onOpenAdd, onToggleFavorite }: { foods: Food[]; locations: MenuLocation[]; onRetry: () => void; menuStatus: "loading" | "live" | "cached" | "unavailable"; menuFetchedAt: string; favoriteFoods: Food[]; foodUsage: FoodUsageMap; onOpenAdd: (meal?: MealName, food?: Food) => void; onToggleFavorite: (foodId: string) => void }) {
+function FoodsView({ foods: sourceFoods, partial, locations, onRetry, menuStatus, menuFetchedAt, favoriteFoods, foodUsage, onOpenAdd, onToggleFavorite }: { foods: Food[]; partial: boolean; locations: MenuLocation[]; onRetry: () => void; menuStatus: "loading" | "live" | "cached" | "unavailable"; menuFetchedAt: string; favoriteFoods: Food[]; foodUsage: FoodUsageMap; onOpenAdd: (meal?: MealName, food?: Food) => void; onToggleFavorite: (foodId: string) => void }) {
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("all");
   const [tagFilters, setTagFilters] = useState<string[]>([]);
@@ -741,8 +723,8 @@ function FoodsView({ foods: sourceFoods, locations, onRetry, menuStatus, menuFet
   }), foodUsage, sortBy);
   const fetchedLabel = menuFetchedAt ? `Updated ${new Date(menuFetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for menu data";
   return <>
-    <section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? "Live Nutrislice menu" : menuStatus === "loading" ? "Loading menu" : menuStatus === "cached" ? "Saved Hopkins menu" : "Menu unavailable"}</div></section>
-    <div className="catalog-disclaimer">{menuStatus === "live" ? "Menus and nutrition come directly from Hopkins Dining. Check the official menu for recipes, portions, and allergen details." : menuStatus === "cached" ? "Showing a saved Hopkins menu for the selected date, downloaded within the last 24 hours. The live feed is temporarily unavailable." : menuStatus === "loading" ? "Checking Hopkins Dining’s menus for the selected date…" : "Hopkins’ menus could not be loaded for this date. Try again or open the official menu."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div>
+    <section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? (partial ? "Partial Hopkins menu" : "Live Nutrislice menu") : menuStatus === "loading" ? "Loading menu" : menuStatus === "cached" ? "Saved Hopkins menu" : "Menu unavailable"}</div></section>
+    <div className="catalog-disclaimer">{menuStatus === "live" ? (partial ? "Some meal menus could not be loaded. Refresh to try again, or check the official Hopkins menu for the complete selection." : "Menus and nutrition come directly from Hopkins Dining. Check the official menu for recipes, portions, and allergen details.") : menuStatus === "cached" ? "Showing a saved Hopkins menu for the selected date, downloaded within the last 24 hours. The live feed is temporarily unavailable." : menuStatus === "loading" ? "Checking Hopkins Dining’s menus for the selected date…" : "Hopkins’ menus could not be loaded for this date. Try again or open the official menu."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div>
     <div className="menu-locations">{locations.map((item) => <div className="menu-location" key={item.id}><strong>{item.name}</strong><span>{menuStatus === "loading" ? "Checking menu…" : item.status === "available" ? `${sourceFoods.filter((food) => food.locationId === item.id).length} foods` : item.status === "empty" ? "No menu published for this date" : "Menu unavailable"}</span><a href={item.menuUrl} target="_blank" rel="noreferrer">Official menu ↗</a></div>)}</div>
     {menuStatus !== "loading" && <button className="secondary-button" type="button" onClick={onRetry}>Refresh menus</button>}
     <section className="food-toolbar">

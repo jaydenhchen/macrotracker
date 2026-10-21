@@ -118,6 +118,105 @@ test('upstream timeouts abort without an unbounded retry loop', async () => {
   assert.ok(Date.now() - start < 2500);
 });
 
+test('realistic menus larger than four MB are retained with bounded concurrency', async () => {
+  const menus = ['hopkins-cafe-breakfast', 'hopkins-cafe-lunch', 'hopkins-cafe-dinner'];
+  const largeWeek = JSON.stringify({ ...weekly, description: 'x'.repeat(4_100_000) });
+  let active = 0;
+  let peak = 0;
+  global.fetch = async (url) => {
+    if (url.includes('/schools/')) return json([{ ...directory[0], active_menu_types: menus.map((slug) => ({ slug, name: slug })) }]);
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setImmediate(resolve));
+    active--;
+    return new Response(largeWeek, { headers: { 'Content-Type': 'application/json' } });
+  };
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.foods.length, 3);
+  assert.ok(peak <= 2);
+});
+
+test('malformed selected-day item containers are errors, not successful empty menus', async () => {
+  global.fetch = async (url) => url.includes('/schools/') ? json([directory[0]]) : json({ days: [{ date: '2026-10-21', menu_items: { broken: true } }] });
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(result.partial, true);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0].message, /malformed menu items/);
+  assert.equal(result.locations[0].status, 'unavailable');
+  assert.throws(() => extractMenuItems({ days: [{ date: '2026-10-21', menu_items: [null] }] }, '2026-10-21'), /invalid menu item/);
+});
+
+test('serving edits and backup round trips preserve immutable nutrition without rounding drift', () => {
+  const { resizeMealEntry } = require('../lib/nutrition.ts');
+  const { DEFAULT_STATE, normalizeState } = require('../lib/storage.ts');
+  const nutrition = { calories: 101, protein: 5.1, carbs: 10.3, fat: 2.2 };
+  let entry = { id: 'entry', foodId: 'food', foodName: 'Food', servingSize: '1 serving', servings: 1, nutrition, nutritionPerServing: nutrition, locationName: 'Hopkins Café' };
+  for (let index = 0; index < 20; index++) {
+    entry = resizeMealEntry(entry, 0.25);
+    const state = normalizeState(JSON.parse(JSON.stringify({ ...DEFAULT_STATE, dayLogs: { '2026-10-21': { date: '2026-10-21', meals: { Lunch: [entry] }, customMacros: [], waterEntries: [] } } })));
+    entry = resizeMealEntry(state.dayLogs['2026-10-21'].meals.Lunch[0], 1);
+    assert.deepEqual(entry.nutrition, nutrition);
+  }
+});
+
+test('fractional add-ons use the same unrounded basis for logging, display and resizing', () => {
+  const { mealNutritionBasis, nutritionForMeal, resizeMealEntry } = require('../lib/nutrition.ts');
+  const food = { calories: 101, protein: 1.8, carbs: 0, fat: 0 };
+  const addOns = [{ id: 'addon', name: 'Protein', category: 'protein', servingSize: '1 scoop', calories: 101, protein: 3, carbs: 0, fat: 0, quantity: 0.25 }];
+  const original = nutritionForMeal(food, 2, addOns);
+  assert.deepEqual(original, { calories: 253, protein: 5.1, carbs: 0, fat: 0 });
+  let entry = { id: 'entry', foodId: 'food', foodName: 'Food', servingSize: '1 serving', locationName: 'Hopkins Café', servings: 2, nutrition: original, nutritionPerServing: mealNutritionBasis(food, addOns), addOns };
+  for (const servings of [1, 2, 0.25, 2, 3, 2]) {
+    entry = resizeMealEntry(entry, servings);
+    assert.deepEqual(entry.nutrition, nutritionForMeal(food, servings, addOns));
+  }
+  assert.deepEqual(entry.nutrition, original);
+});
+
+function cacheFixture() {
+  const hc = normalizeMenuItem({ food }, HOPKINS_LOCATIONS[0], 'hopkins-cafe-lunch', '2026-10-21');
+  const levering = normalizeMenuItem({ food }, HOPKINS_LOCATIONS[2], 'lunch', '2026-10-21');
+  return { ok: true, schemaVersion: 6, source: 'hopkins-nutrislice', date: '2026-10-21', fetchedAt: new Date(Date.now() - 3600000).toISOString(), partial: false,
+    foods: [hc, levering], locations: HOPKINS_LOCATIONS.map((location) => ({ ...location, status: [hc.locationId, levering.locationId].includes(location.id) ? 'available' : 'empty' })), errors: [] };
+}
+
+test('a partial live request preserves cached failed locations without extending their age', async () => {
+  const { fetchTodayMenu } = require('../lib/nutrislice.ts');
+  const stored = cacheFixture();
+  let saved = JSON.stringify(stored);
+  global.window = { location: { origin: 'https://jaydenhchen.github.io' } };
+  global.localStorage = { getItem: () => saved, setItem: (_key, value) => { saved = value; } };
+  const live = { ...stored, fetchedAt: new Date().toISOString(), partial: true, foods: [stored.foods[1]], locations: stored.locations.map((location) => location.id === 'hopkins-cafe' ? { ...location, status: 'unavailable' } : location), errors: [{ locationId: 'hopkins-cafe', mealType: 'hopkins-cafe-lunch', message: 'upstream status 429' }] };
+  global.fetch = async (url) => url.startsWith('https:') ? json(live) : json({}, 404);
+  for (let index = 0; index < 2; index++) {
+    const menu = await fetchTodayMenu('2026-10-21');
+    assert.equal(menu.foods.length, 2);
+    assert.equal(menu.mode, 'cached');
+    assert.equal(menu.fetchedAt, stored.fetchedAt);
+    assert.equal(menu.locations.find((location) => location.id === 'hopkins-cafe').cached, true);
+    assert.equal(JSON.parse(saved).foods.length, 2);
+  }
+});
+
+test('failed individual meals can use saved foods while published-empty locations stay empty', async () => {
+  const { fetchTodayMenu } = require('../lib/nutrislice.ts');
+  const stored = cacheFixture();
+  let saved = JSON.stringify(stored);
+  global.window = { location: { origin: 'https://jaydenhchen.github.io' } };
+  global.localStorage = { getItem: () => saved, setItem: (_key, value) => { saved = value; } };
+  const breakfast = normalizeMenuItem({ food }, HOPKINS_LOCATIONS[0], 'hopkins-cafe-breakfast', '2026-10-21');
+  let live = { ...stored, fetchedAt: new Date().toISOString(), partial: true, foods: [breakfast, stored.foods[1]], errors: [{ locationId: 'hopkins-cafe', mealType: 'hopkins-cafe-lunch', message: 'upstream status 429' }] };
+  global.fetch = async (url) => url.startsWith('https:') ? json(live) : json({}, 404);
+  const menu = await fetchTodayMenu('2026-10-21');
+  assert.equal(menu.foods.length, 3);
+  assert.equal(menu.mode, 'cached');
+  live = { ...live, partial: false, foods: [stored.foods[1]], errors: [], locations: stored.locations.map((location) => location.id === 'hopkins-cafe' ? { ...location, status: 'empty' } : location) };
+  const empty = await fetchTodayMenu('2026-10-21');
+  assert.equal(empty.foods.length, 1);
+  assert.equal(empty.mode, 'live');
+});
+
 test('GitHub Pages fallback respects base paths, dates, and provenance', async () => {
   process.env.NEXT_PUBLIC_BASE_PATH = '/macrotracker';
   const { fetchTodayMenu } = require('../lib/nutrislice.ts');
