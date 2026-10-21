@@ -1,0 +1,11 @@
+name = "bluejay-fuel-menu-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-10-21"
+workers_dev = true
+
+[vars]
+NUTRISLICE_API_BASE = "https://hopkinsdining.api.nutrislice.com"
+CACHE_TTL_SECONDS = "300"
+UPSTREAM_TIMEOUT_MS = "5000"
+# Replace * with the exact GitHub Pages origin after the first deploy if desired.
+ALLOWED_ORIGINS = "*"

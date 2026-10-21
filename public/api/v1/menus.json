@@ -1,0 +1,10 @@
+{
+  "data": [
+    { "date": "2026-10-20", "locationId": "hopkins-cafe", "foodIds": ["cafe-grilled-chicken", "cafe-roasted-vegetables", "cafe-brown-rice", "snack-banana", "snack-protein-bar"] },
+    { "date": "2026-10-20", "locationId": "ffc", "foodIds": ["ffc-turkey-chili", "ffc-tofu-stir-fry", "ffc-greek-yogurt"] },
+    { "date": "2026-10-20", "locationId": "nolans", "foodIds": ["nolans-burrito-bowl", "nolans-avocado-toast"] },
+    { "date": "2026-10-20", "locationId": "levering", "foodIds": ["levering-salmon", "levering-pasta"] }
+  ],
+  "source": "fallback-catalog",
+  "updatedAt": "2026-10-20T12:00:00.000Z"
+}

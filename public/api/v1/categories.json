@@ -1,0 +1,14 @@
+{
+  "data": [
+    { "id": "breakfast", "name": "Breakfast" },
+    { "id": "lunch", "name": "Lunch" },
+    { "id": "dinner", "name": "Dinner" },
+    { "id": "snacks", "name": "Snacks" },
+    { "id": "high-protein", "name": "High protein" },
+    { "id": "vegan", "name": "Vegan" },
+    { "id": "vegetarian", "name": "Vegetarian" },
+    { "id": "gluten-free", "name": "Gluten-free" }
+  ],
+  "source": "fallback-catalog",
+  "updatedAt": "2026-10-20T12:00:00.000Z"
+}
