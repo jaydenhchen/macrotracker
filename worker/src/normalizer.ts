@@ -5,6 +5,12 @@ export type NutrisliceLocation = {
   menuUrl: string;
 };
 
+export type MenuTarget = {
+  location: NutrisliceLocation;
+  school: string;
+  mealTypes: string[];
+};
+
 export type NormalizedFood = {
   id: string;
   name: string;
@@ -62,6 +68,66 @@ function record(value: unknown): JsonRecord | null {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function slugValue(value: unknown) {
+  return stringValue(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function normalizedText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function directoryEntries(payload: unknown) {
+  if (Array.isArray(payload)) return arrayRecords(payload);
+  const root = record(payload);
+  if (!root) return [];
+  for (const key of ["schools", "locations", "sites", "results"]) {
+    const entries = arrayRecords(root[key]);
+    if (entries.length || Array.isArray(root[key])) return entries;
+  }
+  return [];
+}
+
+function directorySchool(entry: JsonRecord) {
+  const nested = record(entry.school);
+  const merged = nested ? { ...entry, ...nested } : entry;
+  const slug = slugValue(merged.slug ?? merged.school_slug ?? merged.school ?? merged.path ?? merged.id);
+  const name = stringValue(merged.name ?? merged.title ?? merged.display_name ?? merged.label);
+  return { merged, slug, name };
+}
+
+function directoryMealTypes(entry: JsonRecord) {
+  const raw = entry.menu_types ?? entry.menuTypes ?? entry.menu_type_options ?? entry.menus;
+  if (!Array.isArray(raw)) return [];
+  return Array.from(new Set(raw.map((value) => {
+    if (typeof value === "string") return slugValue(value);
+    const item = record(value);
+    return slugValue(item?.slug ?? item?.menu_type ?? item?.name ?? item?.title);
+  }).filter(Boolean)));
+}
+
+const LOCATION_ALIASES: Record<string, string[]> = {
+  "hopkins-cafe": ["hopkins cafe", "fresh food cafe", "ffc"],
+  "nolans-on-33rd": ["nolan", "nolans on 33rd"],
+  "levering-kitchens": ["levering kitchens"],
+  "levering-cafe": ["levering cafe"],
+  "peabody-institute": ["peabody", "peabody institute"],
+};
+
+/** Resolve current school slugs and menu types from Nutrislice's directory when available. */
+export function resolveMenuTargets(payload: unknown): MenuTarget[] {
+  const entries = directoryEntries(payload).map(directorySchool);
+  return HOPKINS_LOCATIONS.map((location) => {
+    const candidates = [location.name, location.school, ...(LOCATION_ALIASES[location.id] ?? [])].map(normalizedText).filter(Boolean);
+    const match = entries.find(({ slug, name }) => {
+      const haystack = normalizedText(`${slug} ${name}`);
+      return candidates.some((candidate) => haystack === candidate || haystack.includes(candidate) || candidate.includes(haystack));
+    });
+    const school = match?.slug || location.school;
+    const mealTypes = match ? directoryMealTypes(match.merged) : [];
+    return { location, school, mealTypes: mealTypes.length ? mealTypes : [...MENU_TYPES] };
+  });
 }
 
 function numberValue(value: unknown) {

@@ -1,4 +1,4 @@
-import { extractMenuItems, HOPKINS_LOCATIONS, makeMenuResponse, MENU_TYPES, type MenuResponse, type NutrisliceLocation } from "./normalizer";
+import { extractMenuItems, makeMenuResponse, resolveMenuTargets, type MenuResponse, type NutrisliceLocation } from "./normalizer";
 
 export type Env = {
   NUTRISLICE_API_BASE?: string;
@@ -51,9 +51,9 @@ function numberEnv(value: string | undefined, fallback: number, min: number, max
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback;
 }
 
-function upstreamUrls(base: string, location: NutrisliceLocation, mealType: string, date: string) {
+function upstreamUrls(base: string, school: string, mealType: string, date: string) {
   const [year, month, day] = date.split("-");
-  const schoolPath = location.school.split("/").map((part) => encodeURIComponent(part)).join("/");
+  const schoolPath = school.split("/").map((part) => encodeURIComponent(part)).join("/");
   const root = base.replace(/\/$/, "");
   return [
     `${root}/menu/api/weeks/school/${schoolPath}/menu-type/${encodeURIComponent(mealType)}/${year}/${month}/${day}/?format=json`,
@@ -84,17 +84,24 @@ async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
 async function fetchMenu(date: string, env: Env) {
   const base = env.NUTRISLICE_API_BASE || DEFAULT_API_BASE;
   const timeoutMs = numberEnv(env.UPSTREAM_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 1000, 10000);
-  const jobs = HOPKINS_LOCATIONS.flatMap((location) => MENU_TYPES.map((mealType) => ({ location, mealType })));
+  let targets = resolveMenuTargets(null);
+  try {
+    const directory = await fetchJson(`${base.replace(/\/$/, "")}/menu/api/schools/?format=json`, timeoutMs);
+    targets = resolveMenuTargets(directory);
+  } catch {
+    // The directory is a convenience; the known public slugs remain the fallback.
+  }
+  const jobs = targets.flatMap((target) => target.mealTypes.map((mealType) => ({ ...target, mealType })));
   const results: Array<{ location: NutrisliceLocation; mealType: string; items: ReturnType<typeof extractMenuItems> }> = [];
   const errors: MenuResponse["errors"] = [];
   const concurrency = 10;
 
   for (let index = 0; index < jobs.length; index += concurrency) {
     const batch = jobs.slice(index, index + concurrency);
-    const batchResults = await Promise.all(batch.map(async ({ location, mealType }) => {
+  const batchResults = await Promise.all(batch.map(async ({ location, school, mealType }) => {
       try {
         let lastError: unknown = null;
-        for (const url of upstreamUrls(base, location, mealType, date)) {
+        for (const url of upstreamUrls(base, school, mealType, date)) {
           try {
             const payload = await fetchJson(url, timeoutMs);
             const items = extractMenuItems(payload, date);
@@ -143,7 +150,7 @@ export default {
     if (cached) return cachedResponse(cached, request, env, "HIT");
 
     const payload = await fetchMenu(date, env);
-    if (payload.errors.length === HOPKINS_LOCATIONS.length * MENU_TYPES.length || payload.foods.length === 0) {
+    if (payload.foods.length === 0) {
       return json({ ok: false, date, error: payload.foods.length === 0 ? "Hopkins returned no menu items for this date" : "Hopkins Dining was unavailable", errors: payload.errors }, 502, request, env, { "Cache-Control": "no-store" });
     }
     const response = json(payload, 200, request, env, { "Cache-Control": `public, max-age=${ttl}, s-maxage=${ttl}, stale-while-revalidate=60` });
