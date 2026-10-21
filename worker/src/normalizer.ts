@@ -82,7 +82,7 @@ function directoryEntries(payload: unknown) {
   if (Array.isArray(payload)) return arrayRecords(payload);
   const root = record(payload);
   if (!root) return [];
-  for (const key of ["schools", "locations", "sites", "results"]) {
+  for (const key of ["value", "schools", "locations", "sites", "results", "data"]) {
     const entries = arrayRecords(root[key]);
     if (entries.length || Array.isArray(root[key])) return entries;
   }
@@ -98,7 +98,7 @@ function directorySchool(entry: JsonRecord) {
 }
 
 function directoryMealTypes(entry: JsonRecord) {
-  const raw = entry.menu_types ?? entry.menuTypes ?? entry.menu_type_options ?? entry.menus;
+  const raw = entry.active_menu_types ?? entry.menu_types ?? entry.menuTypes ?? entry.menu_type_options ?? entry.menus;
   if (!Array.isArray(raw)) return [];
   return Array.from(new Set(raw.map((value) => {
     if (typeof value === "string") return slugValue(value);

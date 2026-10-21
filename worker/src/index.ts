@@ -86,7 +86,7 @@ async function fetchMenu(date: string, env: Env) {
   const timeoutMs = numberEnv(env.UPSTREAM_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 1000, 10000);
   let targets = resolveMenuTargets(null);
   try {
-    const directory = await fetchJson(`${base.replace(/\/$/, "")}/menu/api/schools/?format=json`, timeoutMs);
+    const directory = await fetchJson(`${base.replace(/\/$/, "")}/menu/api/schools/`, timeoutMs);
     targets = resolveMenuTargets(directory);
   } catch {
     // The directory is a convenience; the known public slugs remain the fallback.
