@@ -134,3 +134,34 @@ select.plain-input { appearance: none; padding-right: 31px; background-color: #f
 
 .water-card { padding: 23px 25px; min-height: 320px; background: linear-gradient(145deg, #fff, #f2f8ff); }.water-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }.water-card-top > strong { color: var(--blue); font: 700 18px 'Space Grotesk', sans-serif; }.water-card-top > strong small { color: #8fa1bb; font: 500 10px 'DM Sans', sans-serif; }.water-progress { height: 10px; margin: 48px 0 10px; border-radius: 99px; background: #e3ebf7; overflow: hidden; }.water-progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6a9ee7, #244f9f); transition: width .2s ease; }.water-helper { color: var(--muted); font-size: 11px; margin: 0; }.water-actions { display: flex; align-items: center; gap: 7px; margin-top: 25px; }.water-actions > button, .water-actions form { height: 34px; border: 1px solid #cbdaf0; border-radius: 8px; background: #fff; color: var(--blue); font-size: 10px; font-weight: 700; }.water-actions > button { padding: 0 10px; }.water-actions form { display: flex; overflow: hidden; flex: 1; min-width: 0; }.water-actions input { min-width: 0; width: 100%; border: 0; outline: 0; padding: 0 8px; color: var(--ink); font-size: 10px; }.water-actions form button { width: 32px; border: 0; border-left: 1px solid #dbe5f2; background: var(--blue-pale); color: var(--blue); display: grid; place-items: center; }.water-log { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 18px; }.water-log div { display: flex; align-items: center; gap: 4px; padding: 5px 7px; border-radius: 7px; background: rgba(255,255,255,.76); color: #8295b0; font-size: 9px; }.water-log button { border: 0; padding: 0; display: grid; background: transparent; color: #a0afc2; }.macro-sources-heading { margin-top: 38px; }.macro-sources { overflow-x: auto; padding: 4px 19px; }.source-grid { min-width: 680px; display: grid; grid-template-columns: minmax(230px, 1fr) 80px 80px 80px 80px 28px; align-items: center; gap: 10px; }.source-grid-head { padding: 10px 0 7px; color: #99a7b8; text-transform: uppercase; letter-spacing: .7px; font-size: 8px; font-weight: 700; }.source-grid-head span:not(:first-child), .source-grid-row > span { text-align: right; }.source-grid-row { padding: 11px 0; border-top: 1px solid #eef1f5; color: #6f8098; font-size: 10px; }.source-grid-row > strong { color: var(--orange); text-align: right; font-size: 11px; }.source-name { min-width: 0; display: grid; gap: 4px; }.source-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 11px; }.source-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9aa7b8; font-size: 9px; }.macro-modal { width: min(520px, 100%); padding: 24px 25px 21px; }.macro-modal .modal-header { padding: 0 0 11px; }.macro-modal-copy { color: var(--muted); font-size: 11px; line-height: 1.5; margin-bottom: 20px; }.macro-entry-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 13px; }.macro-entry-grid .plain-input { padding: 0 8px; }.macro-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 @media (max-width: 720px) { .water-card { min-height: 0; }.water-progress { margin-top: 30px; }.macro-entry-grid { grid-template-columns: repeat(2, 1fr); }.source-grid { grid-template-columns: minmax(190px, 1fr) 65px 70px 65px 65px 24px; min-width: 590px; } }
+
+/* The native select owns the entire painted box, including its decorative icons. */
+.select-field { padding: 0; cursor: pointer; }
+.select-field select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0 34px 0 13px; border-radius: inherit; z-index: 2; }
+.select-field.location-select select { padding-left: 37px; }
+.select-field > svg { position: absolute; pointer-events: none; z-index: 3; }
+.select-field > svg:first-child:not(:last-child) { left: 13px; }
+.select-field:focus-within, .filter-trigger:focus-visible, select.plain-input:focus-visible { outline: 2px solid #244f9f; outline-offset: 2px; }
+select.plain-input { cursor: pointer; }
+.filter-option:focus-within { outline: 2px solid #244f9f; outline-offset: -2px; }
+.food-toolbar { flex-wrap: wrap; }
+.food-toolbar .search-field { flex-basis: 240px; min-width: 180px; }
+.food-modal .modal-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.food-modal .modal-controls .search-field { grid-column: 1 / -1; }
+.food-modal .modal-controls .select-field, .food-modal .modal-controls .tag-filter-menu { min-width: 0; }
+.food-modal { overflow-y: auto; }
+.food-modal-list { flex: 1 1 auto; min-height: 120px; }
+.food-modal .modal-controls, .food-modal .meal-tabs, .food-modal .selected-food-panel { flex-shrink: 0; }
+.menu-locations { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.menu-location { padding: 9px 12px; border: 1px solid #dce4ee; border-radius: 10px; display: grid; gap: 4px; font-size: 11px; }
+.menu-location span { color: #718099; font-size: 10px; }
+.menu-location a, .official-menu-link { color: var(--blue); font-size: 11px; }
+.menu-notice { padding: 12px; border-radius: 10px; background: #fff9f0; color: #73552f; font-size: 12px; line-height: 1.6; margin: 0 0 14px; }
+.menu-notice button { margin-left: 10px; }
+.food-modal .menu-notice { margin: 0 25px 12px; }
+.nutrition-unavailable { color: #73552f; font-size: 11px; line-height: 1.5; padding: 8px 0; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+.date-label { position: relative; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.date-label input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.date-label input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+@media (max-width: 430px) { .food-modal .modal-controls { grid-template-columns: 1fr 1fr; } .food-modal .modal-controls > .select-field:last-child { grid-column: 1 / -1; } }

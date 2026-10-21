@@ -20,7 +20,7 @@ npm run build
 
 ## GitHub Pages
 
-The workflow in `.github/workflows/deploy.yml` builds and deploys the static export whenever `main` is updated. In the repository settings, set Pages to **GitHub Actions**. The workflow automatically supplies the repository name as the Next.js `basePath`, so the app works as a project site such as `https://USERNAME.github.io/REPOSITORY/`.
+The workflow in `.github/workflows/deploy.yml` builds and deploys the static export whenever `main` is updated and every six hours to refresh real Hopkins menus. In the repository settings, set Pages to **GitHub Actions**. The workflow automatically supplies the repository name as the Next.js `basePath`, so the app works as a project site such as `https://USERNAME.github.io/REPOSITORY/`.
 
 ## Public catalog API
 
@@ -36,7 +36,11 @@ Goals, food logs, favorites, and weights are never sent to the API. They stay in
 
 The Today view also stores hydration entries and outside macro sources on-device. Use the hydration quick-add controls for water, or use **Add outside source** for items such as protein powder; calories are inferred from protein, carbs, and fat when you leave calories blank. The **Where your macros came from** table shows each Hopkins food and outside entry beside its calories, protein, carbs, and fat.
 
-The app calls the Cloudflare Worker at `NEXT_PUBLIC_MENU_API_URL` for the selected date. If the Worker is missing, unavailable, times out, or returns malformed data, it clearly labels and uses the bundled starter snapshot instead. The client never sends goals, food logs, favorites, or weights to the Worker.
+The app calls the Cloudflare Worker at `NEXT_PUBLIC_MENU_API_URL` for the selected date. If the Worker is unavailable, times out, or returns malformed data, it uses a real Nutrislice menu for that same date saved on the device or published at `/api/menus/YYYY-MM-DD.json` by the Pages build. Saved data expires after 24 hours and is clearly labeled. If no valid menu is available, the app displays an unavailable state with official menu links. The legacy starter catalog under `/api/v1/` is not used as today's menu. The client never sends goals, food logs, favorites, or weights to the Worker.
+
+Run `npm run menus:refresh` to download real menus for today, yesterday, and tomorrow before `npm run build`. Run `npm test` for API regression tests. The pull-request workflow also downloads actual Hopkins data and tests desktop/mobile dropdown clicks, location filters, combined dietary tags, and sorting in Chromium.
+
+If Hopkins is temporarily offline, the Pages workflow can still publish app fixes with an explicit unavailable state. The pull-request integration check remains strict so an upstream outage is visible during verification. No sample foods are generated when downloads fail.
 
 ## Free Cloudflare menu proxy
 

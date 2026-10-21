@@ -1,0 +1,32 @@
+name: Verify app and real Hopkins menus
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck && npm run worker:typecheck && npm test
+      - name: Fetch and report every real Hopkins location
+        run: npm run menus:refresh
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_BASE_PATH: /macrotracker
+      - name: Install browser test tools
+        run: npm install --no-save --package-lock=false playwright && npx playwright install --with-deps chromium
+      - name: Verify mobile and desktop dropdowns and menus
+        run: node scripts/browser-smoke.cjs
+        env:
+          NEXT_PUBLIC_BASE_PATH: /macrotracker

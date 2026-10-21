@@ -1,4 +1,4 @@
-import { extractMenuItems, makeMenuResponse, resolveMenuTargets, type MenuResponse, type NutrisliceLocation } from "./normalizer";
+import { extractMenuItems, makeMenuResponse, resolveMenuTargets, type MenuResponse, type MenuResult } from "./normalizer";
 
 export type Env = {
   NUTRISLICE_API_BASE?: string;
@@ -14,7 +14,7 @@ const DEFAULT_CACHE_TTL = 300;
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_DATE_YEAR = 2200;
 // Bump this whenever target resolution changes so a previously partial menu cannot mask a fix.
-const CACHE_SCHEMA = "4";
+const CACHE_SCHEMA = "7";
 
 function corsHeaders(request: Request, env: Env) {
   const origin = request.headers.get("Origin");
@@ -43,8 +43,8 @@ function validDate(value: string | null) {
   return value;
 }
 
-function todayUtc() {
-  return new Date().toISOString().slice(0, 10);
+function todayHopkins() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
 function numberEnv(value: string | undefined, fallback: number, min: number, max: number) {
@@ -52,57 +52,44 @@ function numberEnv(value: string | undefined, fallback: number, min: number, max
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback;
 }
 
-function expandMenuTemplate(template: string, base: string, school: string, mealType: string, date: string) {
-  const [year, month, day] = date.split("-");
-  const schoolPath = school.split("/").map((part) => encodeURIComponent(part)).join("/");
-  const root = base.replace(/\/$/, "");
-  const values: Record<string, string> = {
-    school: schoolPath,
-    school_slug: schoolPath,
-    "school-slug": schoolPath,
-    menu_type: encodeURIComponent(mealType),
-    "menu-type": encodeURIComponent(mealType),
-    menutype: encodeURIComponent(mealType),
-    year,
-    month,
-    day,
-    date,
-  };
-  const expanded = template.replace(/\{([^}]+)\}/g, (match, key: string) => values[key.trim().toLowerCase()] ?? match);
-  const candidate = /^https?:\/\//i.test(expanded)
-    ? expanded
-    : `${root}/${expanded.replace(/^\/+/, "")}`;
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.origin !== new URL(root).origin || /\{[^}]+\}/.test(parsed.pathname + parsed.search)) return null;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-}
-
-function upstreamUrls(base: string, school: string, mealType: string, date: string, templates: string[] = [], templateMealType = mealType) {
-  const [year, month, day] = date.split("-");
-  const schoolPath = school.split("/").map((part) => encodeURIComponent(part)).join("/");
-  const root = base.replace(/\/$/, "");
-  const exactUrls = templates.map((template) => expandMenuTemplate(template, base, school, templateMealType, date)).filter((url): url is string => Boolean(url));
-  return Array.from(new Set([
-    ...exactUrls,
-    `${root}/menu/api/weeks/school/${schoolPath}/menu-type/${encodeURIComponent(mealType)}/${year}/${month}/${day}/?format=json`,
-    `${root}/menu/api/digest/school/${schoolPath}/menu-type/${encodeURIComponent(mealType)}/date/${year}/${month}/${day}/?format=json`,
-  ]));
+/** Nutrislice's weeks endpoint is keyed by Sunday, with exact directory slugs. */
+export function upstreamUrl(base: string, school: string, mealType: string, date: string) {
+  const week = new Date(`${date}T12:00:00Z`);
+  week.setUTCDate(week.getUTCDate() - week.getUTCDay());
+  const [year, month, day] = week.toISOString().slice(0, 10).split("-");
+  return `${base.replace(/\/$/, "")}/menu/api/weeks/school/${encodeURIComponent(school)}/menu-type/${encodeURIComponent(mealType)}/${year}/${month}/${day}/?format=json`;
 }
 
 async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal });
-    if (!response.ok) throw new Error(`upstream status ${response.status}`);
+    const response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal, redirect: "error" });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`upstream status ${response.status}`);
+    }
     const contentType = response.headers.get("Content-Type") || "";
-    if (!contentType.toLowerCase().includes("json")) throw new Error("upstream did not return JSON");
-    const body = await response.text();
-    if (body.length > 2_000_000) throw new Error("upstream response was too large");
+    if (!contentType.toLowerCase().includes("json")) {
+      await response.body?.cancel();
+      throw new Error("upstream did not return JSON");
+    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("upstream returned an empty response");
+    const decoder = new TextDecoder();
+    let body = "";
+    let bytes = 0;
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > 16_000_000) {
+        await reader.cancel();
+        throw new Error("upstream response was too large");
+      }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    body += decoder.decode();
     try {
       return JSON.parse(body) as unknown;
     } catch {
@@ -113,55 +100,55 @@ async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
   }
 }
 
-async function fetchMenu(date: string, env: Env) {
+export async function fetchMenu(date: string, env: Env = {}) {
   const base = env.NUTRISLICE_API_BASE || DEFAULT_API_BASE;
   const timeoutMs = numberEnv(env.UPSTREAM_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 1000, 10000);
-  let targets = resolveMenuTargets(null);
-  try {
-    const directory = await fetchJson(`${base.replace(/\/$/, "")}/menu/api/schools/`, timeoutMs);
-    targets = resolveMenuTargets(directory);
-  } catch {
-    // The directory is a convenience; the known public slugs remain the fallback.
-  }
-  const jobs = targets.flatMap((target) => target.mealTypes.map((mealType) => ({ ...target, mealType })));
-  const results: Array<{ location: NutrisliceLocation; mealType: string; items: ReturnType<typeof extractMenuItems> }> = [];
+  const deadline = Date.now() + 14000;
   const errors: MenuResponse["errors"] = [];
-  const concurrency = 10;
-
-  for (let index = 0; index < jobs.length; index += concurrency) {
-    const batch = jobs.slice(index, index + concurrency);
-    const batchResults = await Promise.all(batch.map(async ({ location, schools, mealType, menuTypeUrls, menuTypeValues }) => {
-      try {
-        let lastError: unknown = null;
-        for (let schoolIndex = 0; schoolIndex < schools.length; schoolIndex += 1) {
-          const schoolCandidate = schools[schoolIndex];
-          const templates = schoolIndex === 0 ? menuTypeUrls[mealType] ?? [] : [];
-          const templateMealType = schoolIndex === 0 ? menuTypeValues[mealType] ?? mealType : mealType;
-          for (const url of upstreamUrls(base, schoolCandidate, mealType, date, templates, templateMealType)) {
-            try {
-              const payload = await fetchJson(url, timeoutMs);
-              const items = extractMenuItems(payload, date);
-              if (items.length) return { location, mealType, items };
-              lastError = new Error("upstream returned no menu items");
-            } catch (error) {
-              lastError = error;
-            }
-          }
-        }
-        throw lastError instanceof Error ? lastError : new Error("upstream request failed");
-      } catch (error) {
-        errors.push({ locationId: location.id, mealType, message: error instanceof Error ? error.message : "upstream request failed" });
-        return null;
-      }
-    }));
-    results.push(...batchResults.filter((result): result is NonNullable<typeof result> => Boolean(result)));
+  const results: MenuResult[] = [];
+  let targets: ReturnType<typeof resolveMenuTargets> = [];
+  try {
+    const directory = await fetchJson(`${base.replace(/\/$/, "")}/menu/api/schools/?format=json`, timeoutMs);
+    targets = resolveMenuTargets(directory);
+    if (!targets.length) throw new Error("Nutrislice returned an empty or malformed location directory");
+  } catch (error) {
+    errors.push({ locationId: "proxy", mealType: "directory", message: error instanceof Error ? error.message : "Directory unavailable" });
+    return makeMenuResponse(date, [], errors, new Date().toISOString());
   }
-
-  return makeMenuResponse(date, results, errors, new Date().toISOString());
+  // One directory request + at most 44 menu requests, below the free-tier limit.
+  const jobs = targets.flatMap((target) => target.mealTypes.map((mealType) => ({ ...target, mealType })));
+  let nextJob = 0;
+  async function consume() {
+    while (nextJob < jobs.length) {
+      const index = nextJob++;
+      const { location, school, mealType, mealNames } = jobs[index];
+      try {
+        if (index >= 44) throw new Error("Menu request budget exceeded");
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error("Menu request deadline exceeded");
+        const payload = await fetchJson(upstreamUrl(base, school, mealType, date), Math.min(timeoutMs, remaining));
+        if (!payload || typeof payload !== "object" || !("days" in payload) || !Array.isArray(payload.days) && (payload.days === null || typeof payload.days !== "object")) {
+          throw new Error("Nutrislice returned a malformed weekly menu");
+        }
+        results.push({
+          location, mealType, mealName: mealNames[mealType],
+          menuUrl: `${location.menuUrl}/${encodeURIComponent(mealType)}/${date.replaceAll("-", "/")}`,
+          items: extractMenuItems(payload, date),
+        });
+      } catch (error) {
+        errors.push({ locationId: location.id, mealType, message: error instanceof Error ? error.message : "Menu unavailable" });
+      }
+    }
+  }
+  // Large weekly menus can exceed four MB. Limit concurrent bodies so allowing
+  // real menus does not multiply peak memory across six large JSON responses.
+  await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, consume));
+  return makeMenuResponse(date, results, errors, new Date().toISOString(), targets);
 }
 
 function cachedResponse(response: Response, request: Request, env: Env, cacheStatus: string) {
   const headers = new Headers(response.headers);
+  headers.delete("Access-Control-Allow-Origin");
   for (const [key, value] of Object.entries(corsHeaders(request, env))) headers.set(key, value);
   headers.set("X-Menu-Cache", cacheStatus);
   return new Response(response.body, { status: response.status, headers });
@@ -178,20 +165,21 @@ export default {
     const allowed = (env.ALLOWED_ORIGINS || "*").split(",").map((item) => item.trim()).filter(Boolean);
     if (origin && !allowed.includes("*") && !allowed.includes(origin)) return json({ ok: false, error: "Origin not allowed" }, 403, request, env);
 
-    const date = validDate(url.searchParams.get("date")) || (url.searchParams.has("date") ? null : todayUtc());
+    const date = validDate(url.searchParams.get("date")) || (url.searchParams.has("date") ? null : todayHopkins());
     if (!date) return json({ ok: false, error: "date must use YYYY-MM-DD" }, 400, request, env);
 
     const ttl = numberEnv(env.CACHE_TTL_SECONDS, DEFAULT_CACHE_TTL, 30, 3600);
     const cacheKey = new Request(`${url.origin}/api/menu?date=${date}&v=${CACHE_SCHEMA}`, { method: "GET" });
-    const cached = await caches.default.match(cacheKey);
+    const cached = await caches.default.match(cacheKey).catch(() => undefined);
     if (cached) return cachedResponse(cached, request, env, "HIT");
 
     const payload = await fetchMenu(date, env);
-    if (payload.foods.length === 0) {
-      return json({ ok: false, date, error: payload.foods.length === 0 ? "Hopkins returned no menu items for this date" : "Hopkins Dining was unavailable", errors: payload.errors }, 502, request, env, { "Cache-Control": "no-store" });
+    if (payload.foods.length === 0 && payload.errors.length) {
+      return json({ ...payload, ok: false, error: "Hopkins menus are currently unavailable" }, 502, request, env, { "Cache-Control": "no-store" });
     }
-    const response = json(payload, 200, request, env, { "Cache-Control": `public, max-age=${ttl}, s-maxage=${ttl}, stale-while-revalidate=60` });
-    ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
+    const cacheTtl = payload.partial || !payload.foods.length ? 30 : ttl;
+    const response = json(payload, 200, request, env, { "Cache-Control": `public, max-age=${cacheTtl}, s-maxage=${cacheTtl}` });
+    ctx.waitUntil(caches.default.put(cacheKey, response.clone()).catch(() => undefined));
     return cachedResponse(response, request, env, "MISS");
   },
 };

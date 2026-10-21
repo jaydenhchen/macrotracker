@@ -6,7 +6,7 @@ This Worker provides the live menu endpoint used by the GitHub Pages app:
 GET /api/menu?date=YYYY-MM-DD
 ```
 
-It calls Hopkins Dining's Nutrislice JSON endpoints, fetches the five configured Hopkins locations and breakfast/brunch/lunch/dinner menus, normalizes the week response to the requested day, and returns normalized `locations`, `meals`, and flat `foods`. Missing nutrition is represented as zero rather than causing the whole menu to fail.
+It reads Hopkins Dining's Nutrislice school directory and fetches each published location and active menu using the exact upstream school/menu slugs and Sunday week boundary. It selects only the requested date and returns normalized `locations`, `meals`, and flat `foods`, including official menu links. `missingNutrition` explicitly flags missing values; the app displays a dash and disables logging incomplete foods instead of treating unknown macros as zero.
 
 ## Deploy once
 
@@ -23,12 +23,12 @@ Then verify the URL printed by Wrangler:
 curl -i "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/menu?date=2026-10-21"
 ```
 
-The Worker uses the Cloudflare cache API plus five-minute `Cache-Control` headers. It reads Nutrislice's current school and menu-type directory, preserves the directory's date URL templates when present, and retries known Hopkins school-slug aliases when a renamed location returns no items. It limits each upstream request to five seconds and continues when an individual location or meal is unavailable. A completely unavailable upstream returns `502` with `Cache-Control: no-store`, allowing the app to use its bundled fallback instead of caching an outage.
+The Worker caches complete menus for five minutes, and empty/partial menus for 30 seconds. It performs at most 45 upstream requests with two concurrent connections and a 14-second total request budget. Each request times out after at most five seconds. A streamed 16 MB size cap accommodates large Hopkins weekly menus; two concurrent bodies bound peak memory. Failed locations are marked unavailable; a valid menu with no published foods is marked empty. Malformed item containers are failures, not empty menus. A completely unavailable upstream returns `502` with `Cache-Control: no-store` and a consistent `foods`, `locations`, and `errors` shape. The client may then use a real, dated Nutrislice snapshot published by GitHub Actions or saved on the device, for up to 24 hours. Partial live responses retain cached foods for failed locations/meals and preserve their original fetch age. No generated catalog foods are substituted.
 
 To verify that the proxy is not serving a one-location or stale deployment, inspect the location counts after each Worker deploy:
 
 ```bash
-curl -sS "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/menu?date=$(date +%F)" | jq '{ok,food_count:(.foods|length),partial,locations:[.locations[]|{name,food_count:([.meals[].foods[]]|length)}],errors}'
+curl -sS "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/menu?date=$(date +%F)" | jq '{ok,error,food_count:((.foods // [])|length),partial,locations:((.locations // [])|map({name,food_count:([.meals[]?.foods[]?]|length)})),errors}'
 ```
 
 The response should include every location for which Hopkins has menu items. Deploying the current Worker increments its internal cache schema, so the first request after this resolver change cannot reuse the previous partial cache.

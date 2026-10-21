@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "worker:typecheck": "tsc --noEmit -p worker/tsconfig.json"
+    "worker:typecheck": "tsc --noEmit -p worker/tsconfig.json",
+    "test": "node --test scripts/menu.test.cjs",
+    "menus:refresh": "node scripts/build-menus.cjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

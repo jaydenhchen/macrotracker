@@ -15,11 +15,14 @@ export type Food = Nutrition & {
   locationName: string;
   menuUrl?: string;
   mealPeriods: string[];
+  menuType?: string;
   servingSize: string;
   allergens: string[];
   tags: string[];
   addOns?: FoodAddOn[];
   updatedAt: string;
+  missingNutrition?: string[];
+  stationName?: string;
 };
 
 export type FoodAddOn = Nutrition & {
@@ -46,6 +49,7 @@ export type MealEntry = {
   servings: number;
   nutrition: Nutrition;
   locationName: string;
+  nutritionPerServing?: Nutrition;
   addOns?: MealAddOn[];
 };
 

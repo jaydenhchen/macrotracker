@@ -10,7 +10,7 @@ export const DEFAULT_STATE: TrackerState = {
   profile: null,
   dayLogs: {},
   weights: [],
-  favorites: ["cafe-grilled-chicken", "ffc-greek-yogurt"],
+  favorites: [],
   preferredWeightUnit: "lb",
   waterGoal: 64,
 };
@@ -43,6 +43,7 @@ function normalizeMealAddOn(value: unknown): MealAddOn | null {
 function normalizeMealEntry(value: unknown): MealEntry | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.foodId !== "string" || typeof value.foodName !== "string" || typeof value.servingSize !== "string" || typeof value.locationName !== "string") return null;
   const nutrition = isRecord(value.nutrition) ? value.nutrition : {};
+  const perServing = isRecord(value.nutritionPerServing) ? value.nutritionPerServing : null;
   const addOns = Array.isArray(value.addOns) ? value.addOns.map(normalizeMealAddOn).filter((addOn): addOn is MealAddOn => Boolean(addOn)) : undefined;
   return {
     id: value.id,
@@ -57,6 +58,9 @@ function normalizeMealEntry(value: unknown): MealEntry | null {
       fat: finiteNumber(nutrition.fat, 0),
     },
     locationName: value.locationName,
+    ...(perServing && ["calories", "protein", "carbs", "fat"].every((key) => typeof perServing[key] === "number" && Number.isFinite(perServing[key]) && Number(perServing[key]) >= 0) ? {
+      nutritionPerServing: { calories: Number(perServing.calories), protein: Number(perServing.protein), carbs: Number(perServing.carbs), fat: Number(perServing.fat) },
+    } : {}),
     ...(addOns?.length ? { addOns } : {}),
   };
 }
