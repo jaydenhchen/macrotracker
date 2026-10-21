@@ -58,6 +58,7 @@ function normalizeFood(value: unknown): Food | null {
     menuUrl: typeof item.menuUrl === "string" ? item.menuUrl : undefined,
     mealPeriods: stringArray(item.mealPeriods),
     menuType: typeof item.menuType === "string" ? item.menuType : undefined,
+    menuTypes: stringArray(item.menuTypes).length ? stringArray(item.menuTypes) : typeof item.menuType === "string" ? [item.menuType] : [],
     servingSize: typeof item.servingSize === "string" && item.servingSize ? item.servingSize : "1 serving",
     allergens: stringArray(item.allergens),
     tags: stringArray(item.tags),
@@ -66,6 +67,7 @@ function normalizeFood(value: unknown): Food | null {
     protein: numberValue(item.protein),
     carbs: numberValue(item.carbs),
     fat: numberValue(item.fat),
+    addedSugar: item.addedSugar === null ? null : validNutritionValue(item.addedSugar) ? Number(item.addedSugar) : null,
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : "",
     missingNutrition,
     stationName: typeof item.stationName === "string" ? item.stationName : undefined,
@@ -91,8 +93,9 @@ function parseMenu(payload: unknown, date: string, mode: MenuData["mode"]): Menu
   const fetchedAt = typeof root.fetchedAt === "string" ? root.fetchedAt : "";
   const age = Date.now() - Date.parse(fetchedAt);
   if (!Number.isFinite(age) || age < -300000 || age > 86400000) throw new Error("Menu cache has expired");
-  const foods = root.foods.map(normalizeFood).filter((food): food is Food => Boolean(food));
-  if (foods.length !== root.foods.length || foods.some((food) => food.updatedAt !== date)) throw new Error("Invalid menu foods");
+  const normalizedFoods = root.foods.map(normalizeFood).filter((food): food is Food => Boolean(food));
+  if (normalizedFoods.length !== root.foods.length || normalizedFoods.some((food) => food.updatedAt !== date)) throw new Error("Invalid menu foods");
+  const foods = deduplicateFoods(normalizedFoods);
   const locations = root.locations.map((value): MenuLocation => {
     const location = record(value);
     if (!location || typeof location.id !== "string" || typeof location.name !== "string" || typeof location.menuUrl !== "string") throw new Error("Invalid menu location");
@@ -149,7 +152,7 @@ function preserveFailedLocations(live: MenuData, candidates: MenuData[]): MenuDa
     const failures: Array<string | undefined> = location.status === "unavailable" ? [undefined] : location.unavailableMeals ?? [];
     let locationRepaired = false;
     for (const mealType of failures) {
-      const matches = (food: Food) => food.locationId === location.id && (mealType === undefined || food.menuType === mealType);
+      const matches = (food: Food) => food.locationId === location.id && (mealType === undefined || (food.menuTypes ?? [food.menuType]).includes(mealType));
       const candidate = candidates.find((menu) => menu.foods.some(matches));
       if (!candidate) continue;
       repaired = true;
@@ -159,7 +162,30 @@ function preserveFailedLocations(live: MenuData, candidates: MenuData[]): MenuDa
     }
     return locationRepaired ? { ...location, status: "available" as const, cached: true } : location;
   });
-  return repaired ? { ...live, foods: Array.from(new Map(foods.map((food) => [food.id, food])).values()), locations, fetchedAt: oldestFetch, mode: "cached", partial: true } : live;
+  return repaired ? { ...live, foods: deduplicateFoods(foods), locations, fetchedAt: oldestFetch, mode: "cached", partial: true } : live;
+}
+
+function deduplicateFoods(foods: Food[]): Food[] {
+  const unique = new Map<string, Food>();
+  for (const food of foods) {
+    const key = `${food.locationId}:${food.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+    const existing = unique.get(key);
+    if (!existing) {
+      unique.set(key, food);
+      continue;
+    }
+    const preferNewNutrition = (food.missingNutrition?.length ?? 0) < (existing.missingNutrition?.length ?? 0);
+    unique.set(key, {
+      ...(preferNewNutrition ? food : existing),
+      id: existing.id,
+      mealPeriods: Array.from(new Set([...existing.mealPeriods, ...food.mealPeriods])),
+      menuTypes: Array.from(new Set([...(existing.menuTypes ?? [existing.menuType].filter((value): value is string => Boolean(value))), ...(food.menuTypes ?? [food.menuType].filter((value): value is string => Boolean(value)))])),
+      allergens: Array.from(new Set([...existing.allergens, ...food.allergens])),
+      tags: Array.from(new Set([...existing.tags, ...food.tags].filter((tag) => !(food.addedSugar != null || existing.addedSugar != null) || !/no added sugar/i.test(tag)).concat(Math.max(existing.addedSugar ?? 0, food.addedSugar ?? 0) === 0 && (existing.addedSugar === 0 || food.addedSugar === 0) ? ["No Added Sugar"] : []))),
+      addedSugar: existing.addedSugar == null ? food.addedSugar ?? null : food.addedSugar == null ? existing.addedSugar : Math.max(existing.addedSugar, food.addedSugar),
+    });
+  }
+  return Array.from(unique.values());
 }
 
 function storeMenu(key: string, date: string, menu: MenuData) {

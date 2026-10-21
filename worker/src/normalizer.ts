@@ -21,6 +21,7 @@ export type NormalizedFood = {
   menuUrl: string;
   mealPeriods: string[];
   menuType: string;
+  menuTypes: string[];
   servingSize: string;
   allergens: string[];
   tags: string[];
@@ -31,6 +32,7 @@ export type NormalizedFood = {
   protein: number;
   carbs: number;
   fat: number;
+  addedSugar: number | null;
   updatedAt: string;
 };
 
@@ -287,12 +289,23 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
   if (!name) return null;
 
   const nutrition = record(rawFood.rounded_nutrition_info) ?? record(rawFood.nutrition_info) ?? record(item.rounded_nutrition_info) ?? {};
+  const nutritionSources = [
+    record(rawFood.rounded_nutrition_info), record(rawFood.nutrition_info),
+    record(item.rounded_nutrition_info), record(item.nutrition_info),
+  ].filter((source): source is JsonRecord => Boolean(source));
+  const rawAddedSugar = nutritionSources.flatMap((source) => [source.g_added_sugar, source.added_sugar]).find(validNutritionValue)
+    ?? rawFood.added_sugar ?? item.added_sugar;
+  const addedSugar = validNutritionValue(rawAddedSugar) ? Number(rawAddedSugar) : null;
   const servingInfo = record(rawFood.serving_size_info) ?? record(item.serving_size_info) ?? {};
   const icons = iconNames({ ...item, ...rawFood });
   const explicitAllergens = stringList(rawFood.allergens ?? item.allergens ?? rawFood.allergen_icons);
   const allergens = Array.from(new Set([...explicitAllergens, ...icons.filter((icon) => ALLERGEN_NAMES.has(icon.toLowerCase()))]));
-  const tags = Array.from(new Set([...icons, stringValue(rawFood.food_category ?? item.category), ...stringList(item.tags)].filter(Boolean)));
-  const rawId = rawFood.id ?? rawFood.synced_id ?? item.id ?? `${location.id}-${mealType}-${slug(name)}`;
+  const sourceTags = [...icons, stringValue(rawFood.food_category ?? item.category), ...stringList(item.tags)];
+  const tags = Array.from(new Set([
+    ...sourceTags.filter((tag) => !(addedSugar !== null && addedSugar > 0 && /no added sugar/i.test(tag))),
+    ...(addedSugar === 0 ? ["No Added Sugar"] : []),
+  ].filter(Boolean)));
+  const rawId = rawFood.id ?? rawFood.synced_id ?? item.id ?? `${location.id}-${slug(name)}`;
   const addOns = normalizeFoodAddOns(item, rawFood, String(rawId));
   const servingAmount = servingInfo.serving_size_amount ?? rawFood.serving_size_amount ?? item.serving_size_amount ?? "1";
   const servingUnit = servingInfo.serving_size_unit ?? rawFood.serving_size_unit ?? item.serving_size_unit ?? "serving";
@@ -300,7 +313,9 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
   const missingNutrition = Object.entries({ calories: nutrition.calories ?? rawFood.calories, protein: nutrition.g_protein ?? rawFood.protein, carbs: nutrition.g_carbs ?? rawFood.carbs, fat: nutrition.g_fat ?? rawFood.fat }).filter(([, value]) => !validNutritionValue(value)).map(([key]) => key);
 
   return {
-    id: `nutrislice-${location.id}-${String(rawId)}-${mealType}`,
+    // Nutrislice repeats the same food object across meal types and stations.
+    // Use location + normalized display name as the catalog identity.
+    id: `nutrislice-${location.id}-${slug(normalizedText(name)) || String(rawId)}`,
     name,
     description: stringValue(rawFood.description ?? rawFood.subtext) || `${mealName} menu item at ${location.name}.`,
     locationId: location.id,
@@ -308,6 +323,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     menuUrl: location.menuUrl,
     mealPeriods: [mealName],
     menuType: mealType,
+    menuTypes: [mealType],
     servingSize: `${String(servingAmount)} ${String(servingUnit)}`.trim(),
     allergens,
     tags,
@@ -316,6 +332,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     protein: numberValue(nutrition.g_protein ?? rawFood.protein ?? item.protein),
     carbs: numberValue(nutrition.g_carbs ?? rawFood.carbs ?? item.carbs),
     fat: numberValue(nutrition.g_fat ?? rawFood.fat ?? item.fat),
+    addedSugar,
     missingNutrition,
     stationName: stringValue(item.stationName) || undefined,
     updatedAt: date,
@@ -329,7 +346,26 @@ export function makeMenuResponse(date: string, results: MenuResult[], errors: Me
     const food = normalizeMenuItem(item, result.location, result.mealType, date);
     return food ? [{ ...food, menuUrl: result.menuUrl ?? food.menuUrl, mealPeriods: [result.mealName ?? titleCase(result.mealType)] }] : [];
   }));
-  const uniqueFoods = Array.from(new Map(foods.map((food) => [food.id, food])).values());
+  const uniqueFoods = Array.from(foods.reduce((unique, food) => {
+    const key = `${food.locationId}:${normalizedText(food.name)}`;
+    const existing = unique.get(key);
+    if (!existing) {
+      unique.set(key, food);
+      return unique;
+    }
+    const preferNewNutrition = food.missingNutrition.length < existing.missingNutrition.length;
+    unique.set(key, {
+      ...(preferNewNutrition ? food : existing),
+      id: existing.id,
+      mealPeriods: Array.from(new Set([...existing.mealPeriods, ...food.mealPeriods])),
+      menuTypes: Array.from(new Set([...existing.menuTypes, ...food.menuTypes])),
+      allergens: Array.from(new Set([...existing.allergens, ...food.allergens])),
+      tags: Array.from(new Set([...existing.tags, ...food.tags].filter((tag) => !(food.addedSugar !== null || existing.addedSugar !== null) || !/no added sugar/i.test(tag)).concat((existing.addedSugar ?? food.addedSugar) === 0 && Math.max(existing.addedSugar ?? 0, food.addedSugar ?? 0) === 0 ? ["No Added Sugar"] : []))),
+      addedSugar: existing.addedSugar === null ? food.addedSugar : food.addedSugar === null ? existing.addedSugar : Math.max(existing.addedSugar, food.addedSugar),
+      addOns: Array.from(new Map([...(existing.addOns ?? []), ...(food.addOns ?? [])].map((addOn) => [normalizedText(addOn.name), addOn])).values()),
+    });
+    return unique;
+  }, new Map<string, NormalizedFood>()).values());
   const allLocations = new Map([...HOPKINS_LOCATIONS, ...targets.map((target) => target.location), ...results.map((result) => result.location)].map((location) => [location.id, location]));
   const locations: NormalizedLocation[] = Array.from(allLocations.values()).map((location) => {
     const menus = results.filter((result) => result.location.id === location.id);
@@ -341,7 +377,7 @@ export function makeMenuResponse(date: string, results: MenuResult[], errors: Me
       meals: menus.map((menu) => ({
         id: `${location.id}-${menu.mealType}`,
         name: menu.mealName ?? titleCase(menu.mealType),
-        foods: uniqueFoods.filter((food) => food.locationId === location.id && food.menuType === menu.mealType),
+        foods: uniqueFoods.filter((food) => food.locationId === location.id && food.menuTypes.includes(menu.mealType)),
       })),
     };
   });

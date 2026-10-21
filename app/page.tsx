@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { DEFAULT_STATE, dateKey, exportState, loadState, normalizeState, saveState } from "@/lib/storage";
 import { mealNutritionBasis, nutritionForMeal, resizeMealEntry } from "@/lib/nutrition";
+import { matchesFoodTags } from "@/lib/food-filters";
 import { fetchTodayMenu, NUTRISLICE_LOCATIONS, type MenuLocation } from "@/lib/nutrislice";
 import { DayLog, Food, FoodAddOn, Goals, MacroEntry, MealAddOn, MealEntry, MealName, MEALS, Nutrition, TrackerState, UserProfile, WaterEntry, WeightEntry } from "@/lib/types";
 
@@ -55,6 +56,7 @@ const FOOD_TAG_FILTERS = [
   { value: "all", label: "All dietary tags" },
   { value: "vegan", label: "Vegan" },
   { value: "vegetarian", label: "Vegetarian" },
+  { value: "no-added-sugar", label: "No added sugar" },
   { value: "high-protein", label: "High protein" },
   { value: "gluten-free", label: "Gluten-free" },
   { value: "dairy-free", label: "Dairy-free" },
@@ -131,24 +133,12 @@ function addOnsForFood(food: Food, foods: Food[]): FoodAddOn[] {
 
 function displayFoodTags(food: Food) {
   const tags = Array.from(new Set(food.tags.map((tag) => tag.trim()).filter(Boolean)));
-  const priority = [/^vegan$/i, /^vegetarian/i, /high.?protein/i, /gluten.?free/i, /dairy.?free/i, /contains/i];
+  const priority = [/^vegan$/i, /^vegetarian/i, /no added sugar/i, /high.?protein/i, /gluten.?free/i, /dairy.?free/i, /contains/i];
   return tags.sort((a, b) => {
     const aPriority = priority.findIndex((pattern) => pattern.test(a));
     const bPriority = priority.findIndex((pattern) => pattern.test(b));
     return (aPriority < 0 ? 99 : aPriority) - (bPriority < 0 ? 99 : bPriority);
   }).slice(0, 4);
-}
-
-function matchesFoodTag(food: Food, filter: string) {
-  if (!filter || filter === "all") return true;
-  const tags = food.tags.map((tag) => tag.toLowerCase().replace(/[-_]+/g, " ").trim());
-  if (filter === "vegetarian") return tags.some((tag) => tag.includes("vegetarian") || tag === "vegan");
-  if (filter === "high-protein") return !food.missingNutrition?.includes("protein") && food.protein >= 20;
-  return tags.some((tag) => tag === filter.replace("-", " ") || tag.includes(filter.replace("-", " ")));
-}
-
-function matchesFoodTags(food: Food, filters: string[]) {
-  return filters.every((filter) => matchesFoodTag(food, filter));
 }
 
 function FoodTags({ food, compact = false }: { food: Food; compact?: boolean }) {
