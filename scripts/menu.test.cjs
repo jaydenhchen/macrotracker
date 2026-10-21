@@ -1,0 +1,138 @@
+require('./load-typescript.cjs');
+const { test, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
+const { fetchMenu, upstreamUrl, default: worker } = require('../worker/src/index.ts');
+const { resolveMenuTargets, extractMenuItems, normalizeMenuItem, HOPKINS_LOCATIONS } = require('../worker/src/normalizer.ts');
+const originalFetch = global.fetch;
+const directory = [
+  { slug: 'hopkins-cafe', name: 'Hopkins Café', active_menu_types: [{ slug: 'hopkins-cafe-lunch', name: 'Lunch' }] },
+  { slug: 'nolans-on-33rd', name: 'Nolan’s on 33rd', active_menu_types: [{ slug: 'nolans-dinner-2', name: 'Dinner' }] },
+  { slug: 'site-1', name: 'Levering Kitchens', active_menu_types: [{ slug: 'lunch', name: 'Lunch' }] },
+  { slug: 'levering-cafe', name: 'Levering Café', active_menu_types: [{ slug: 'cafe', name: 'Café' }] },
+  { slug: 'peabody-institute', name: 'Peabody Dining Hall', active_menu_types: [{ slug: 'peabody-lunch', name: 'Lunch' }] },
+];
+const food = { id: 25, name: 'Test menu food', rounded_nutrition_info: { calories: 100, g_protein: 10, g_carbs: 8, g_fat: 3 }, icons: { food_icons: [{ synced_name: 'Vegan' }] } };
+const weekly = { days: [{ date: '2026-10-20', menu_items: [{ food: { ...food, name: 'Wrong day' } }] },
+  { date: '2026-10-21', menu_items: [{ is_section_title: true, text: 'Burrito station' }, { food }] }] };
+const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+afterEach(() => { global.fetch = originalFetch; delete global.caches; delete global.window; delete global.localStorage; });
+
+test('every location uses the exact directory menu ID and a Sunday week, without guessing', async () => {
+  let requests = 0;
+  global.fetch = async (url) => {
+    requests++;
+    if (url.includes('/schools/')) return json(directory);
+    assert.ok(directory.some((location) => location.active_menu_types.some((menu) => url === upstreamUrl('https://hopkinsdining.api.nutrislice.com', location.slug, menu.slug, '2026-10-21'))));
+    assert.match(url, /\/2026\/10\/18\/\?format=json$/);
+    return json(weekly);
+  };
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(requests, 6);
+  assert.equal(result.foods.length, 5);
+  assert.equal(result.partial, false);
+  assert.ok(result.locations.every((location) => location.status === 'available'));
+  assert.ok(result.foods.every((item) => item.name === 'Test menu food' && item.stationName === 'Burrito station' && item.tags.includes('Vegan')));
+  assert.match(result.foods.find((item) => item.locationId === 'hopkins-cafe').menuUrl, /hopkins-cafe\/hopkins-cafe-lunch\/2026\/10\/21$/);
+});
+
+test('empty or malformed directory produces a useful error and no fictional foods', async () => {
+  global.fetch = async () => json([]);
+  const result = await fetchMenu('2026-10-21');
+  assert.deepEqual(result.foods, []);
+  assert.equal(result.errors[0].mealType, 'directory');
+  assert.ok(result.locations.every((location) => location.status === 'unavailable'));
+  assert.equal(resolveMenuTargets([{ name: '', slug: '', active_menu_types: [] }]).length, 0);
+});
+
+test('missing macros are explicitly flagged and station headings never become food', () => {
+  assert.equal(normalizeMenuItem({ text: 'Closed today', food: null }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21'), null);
+  const item = normalizeMenuItem({ food: { id: 1, name: 'Unknown macros', rounded_nutrition_info: { calories: 0 } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
+  assert.deepEqual(item.missingNutrition, ['protein', 'carbs', 'fat']);
+  assert.equal(item.calories, 0);
+  assert.equal(extractMenuItems(weekly, '2026-10-22').length, 0);
+});
+
+test('rate limits and malformed responses preserve other locations; empty menus are not failures', async () => {
+  global.fetch = async (url) => {
+    if (url.includes('/schools/')) return json(directory);
+    if (url.includes('/hopkins-cafe/')) return json({}, 429);
+    if (url.includes('/nolans-on-33rd/')) return json({ unexpected: true });
+    if (url.includes('/peabody-institute/')) return json({ days: [] });
+    return json(weekly);
+  };
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(result.foods.length, 2);
+  assert.equal(result.partial, true);
+  assert.equal(result.errors.length, 2);
+  assert.equal(result.locations.find((location) => location.id === 'peabody-institute').status, 'empty');
+});
+
+test('the Worker stays within the free-tier request budget', async () => {
+  let requests = 0;
+  global.fetch = async (url) => {
+    requests++;
+    if (url.includes('/schools/')) return json([{ slug: 'site-1', name: 'Levering Kitchens', active_menu_types: Array.from({ length: 60 }, (_, i) => ({ slug: `menu-${i}`, name: `Menu ${i}` })) }]);
+    return json({ days: [] });
+  };
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(requests, 45);
+  assert.equal(result.errors.filter((error) => error.message.includes('budget')).length, 16);
+});
+
+test('CORS is recalculated on cache hits and invalid dates do not reach upstream', async () => {
+  let requests = 0;
+  global.fetch = async () => { requests++; throw new Error('must not fetch'); };
+  global.caches = { default: { match: async () => new Response('{}', { headers: { 'Access-Control-Allow-Origin': 'https://first.github.io' } }), put: async () => {} } };
+  const context = { waitUntil() {} };
+  const env = { ALLOWED_ORIGINS: 'https://first.github.io,https://second.github.io' };
+  const response = await worker.fetch(new Request('https://worker.test/api/menu?date=2026-10-21', { headers: { Origin: 'https://second.github.io' } }), env, context);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://second.github.io');
+  const noOrigin = await worker.fetch(new Request('https://worker.test/api/menu?date=2026-10-21'), env, context);
+  assert.equal(noOrigin.headers.get('access-control-allow-origin'), null);
+  assert.equal((await worker.fetch(new Request('https://worker.test/api/menu?date=2026-02-30'), env, context)).status, 400);
+  assert.equal((await worker.fetch(new Request('https://worker.test/api/menu', { headers: { Origin: 'https://evil.test' } }), env, context)).status, 403);
+  assert.equal((await worker.fetch(new Request('https://worker.test/api/menu', { method: 'OPTIONS' }), {}, context)).status, 204);
+  assert.equal(requests, 0);
+});
+
+test('502 responses retain arrays and CORS so diagnostics and the frontend can handle them', async () => {
+  global.caches = { default: { match: async () => undefined, put: async () => { throw new Error('outages must not be cached'); } } };
+  global.fetch = async () => json({}, 429);
+  const response = await worker.fetch(new Request('https://worker.test/api/menu?date=2026-10-21', { headers: { Origin: 'https://jaydenhchen.github.io' } }), {}, { waitUntil() {} });
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const payload = await response.json();
+  assert.equal(payload.ok, false);
+  assert.deepEqual(payload.foods, []);
+  assert.equal(payload.locations.length, 5);
+  assert.equal(payload.errors[0].mealType, 'directory');
+});
+
+test('upstream timeouts abort without an unbounded retry loop', async () => {
+  global.fetch = (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('timeout')), { once: true }));
+  const start = Date.now();
+  const result = await fetchMenu('2026-10-21', { UPSTREAM_TIMEOUT_MS: '1000' });
+  assert.equal(result.foods.length, 0);
+  assert.match(result.errors[0].message, /timeout/);
+  assert.ok(Date.now() - start < 2500);
+});
+
+test('GitHub Pages fallback respects base paths, dates, and provenance', async () => {
+  process.env.NEXT_PUBLIC_BASE_PATH = '/macrotracker';
+  const { fetchTodayMenu } = require('../lib/nutrislice.ts');
+  global.window = { location: { origin: 'https://jaydenhchen.github.io' } };
+  global.localStorage = { getItem: () => null, setItem() {} };
+  const requests = [];
+  global.fetch = async (url) => {
+    requests.push(url);
+    if (url.startsWith('https:')) return json({}, 502);
+    return json({ ok: true, schemaVersion: 6, source: 'hopkins-nutrislice', date: '2026-10-21', fetchedAt: new Date().toISOString(), partial: false, foods: [], locations: [] });
+  };
+  const menu = await fetchTodayMenu('2026-10-21');
+  assert.equal(menu.mode, 'cached');
+  assert.equal(requests[1], '/macrotracker/api/menus/2026-10-21.json');
+  global.fetch = async () => json({ ok: true, foods: [{ name: 'Invented food' }] });
+  await assert.rejects(fetchTodayMenu('2026-10-21'));
+  delete process.env.NEXT_PUBLIC_BASE_PATH;
+});

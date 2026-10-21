@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
 
 permissions:
   contents: read
@@ -27,6 +29,10 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Verify menu integration
+        run: npm run worker:typecheck && npm test
+      - name: Download dated Hopkins menu fallback
+        run: npm run menus:refresh -- --allow-unavailable
       - name: Build static site
         run: npm run build
         env:

@@ -10,7 +10,7 @@ export const DEFAULT_STATE: TrackerState = {
   profile: null,
   dayLogs: {},
   weights: [],
-  favorites: ["cafe-grilled-chicken", "ffc-greek-yogurt"],
+  favorites: [],
   preferredWeightUnit: "lb",
   waterGoal: 64,
 };

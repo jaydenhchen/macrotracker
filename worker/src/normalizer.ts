@@ -8,10 +8,8 @@ export type NutrisliceLocation = {
 export type MenuTarget = {
   location: NutrisliceLocation;
   school: string;
-  schools: string[];
   mealTypes: string[];
-  menuTypeUrls: Record<string, string[]>;
-  menuTypeValues: Record<string, string>;
+  mealNames: Record<string, string>;
 };
 
 export type NormalizedFood = {
@@ -22,10 +20,13 @@ export type NormalizedFood = {
   locationName: string;
   menuUrl: string;
   mealPeriods: string[];
+  menuType: string;
   servingSize: string;
   allergens: string[];
   tags: string[];
   addOns?: NormalizedFoodAddOn[];
+  missingNutrition: string[];
+  stationName?: string;
   calories: number;
   protein: number;
   carbs: number;
@@ -52,10 +53,12 @@ export type NormalizedMeal = {
 
 export type NormalizedLocation = NutrisliceLocation & {
   meals: NormalizedMeal[];
+  status: "available" | "empty" | "unavailable";
 };
 
 export type MenuResponse = {
   ok: true;
+  schemaVersion: 6;
   date: string;
   fetchedAt: string;
   source: "hopkins-nutrislice";
@@ -69,7 +72,7 @@ export const HOPKINS_LOCATIONS: readonly NutrisliceLocation[] = [
   { id: "hopkins-cafe", name: "Hopkins Café", school: "hopkins-cafe", menuUrl: "https://hopkinsdining.nutrislice.com/menu/hopkins-cafe" },
   { id: "nolans-on-33rd", name: "Nolan’s on 33rd", school: "nolans-on-33rd", menuUrl: "https://hopkinsdining.nutrislice.com/menu/nolans-on-33rd" },
   { id: "levering-kitchens", name: "Levering Kitchens", school: "site-1", menuUrl: "https://hopkinsdining.nutrislice.com/menu/site-1" },
-  { id: "levering-cafe", name: "Levering Café", school: "levering-cafe/cafe", menuUrl: "https://hopkinsdining.nutrislice.com/menu/levering-cafe/cafe/" },
+  { id: "levering-cafe", name: "Levering Café", school: "levering-cafe", menuUrl: "https://hopkinsdining.nutrislice.com/menu/levering-cafe" },
   { id: "peabody-institute", name: "Peabody Dining Hall", school: "peabody-institute", menuUrl: "https://hopkinsdining.nutrislice.com/menu/peabody-institute" },
 ];
 
@@ -85,134 +88,56 @@ function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function slugValue(value: unknown) {
-  return stringValue(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-function schoolSlug(value: unknown) {
-  const raw = stringValue(value);
-  const menuPath = /\/menu\/(.+?)(?:\/$|$)/i.exec(raw)?.[1];
-  const path = menuPath || raw.replace(/^https?:\/\/[^/]+\//i, "");
-  return path.split("/").filter(Boolean).map(slugValue).filter(Boolean).join("/");
-}
-
-function menuTypeSlug(value: unknown) {
-  const slug = slugValue(value);
-  const match = /(?:^|-)(breakfast|brunch|lunch|dinner|late-night|all-day)(?:-(\d+))?$/.exec(slug);
-  return match ? `${match[1]}${match[2] ? `-${match[2]}` : ""}` : slug;
-}
-
 function normalizedText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function directoryEntries(payload: unknown) {
   if (Array.isArray(payload)) return arrayRecords(payload);
   const root = record(payload);
   if (!root) return [];
-  for (const key of ["value", "schools", "locations", "sites", "results", "data"]) {
-    const entries = arrayRecords(root[key]);
-    if (entries.length || Array.isArray(root[key])) return entries;
+  for (const key of ["value", "schools", "locations", "results", "data"]) {
+    if (Array.isArray(root[key])) return arrayRecords(root[key]);
   }
   return [];
 }
 
-function directorySchool(entry: JsonRecord) {
-  const nested = record(entry.school);
-  const merged = nested ? { ...entry, ...nested } : entry;
-  const slug = schoolSlug(merged.slug ?? merged.school_slug ?? merged.school ?? merged.path ?? merged.id);
-  const name = stringValue(merged.name ?? merged.title ?? merged.display_name ?? merged.label);
-  return { merged, slug, name };
-}
-
-function menuTypeUrlTemplates(value: unknown, depth = 0): string[] {
-  if (depth > 4) return [];
-  if (typeof value === "string") {
-    const normalized = value.trim();
-    return /\/menu\/api\//i.test(normalized) && /\{(?:date|year|month|day|menu_type|menu-type|school)/i.test(normalized)
-      ? [normalized]
-      : [];
-  }
-  const item = record(value);
-  if (!item) return [];
-  return Object.entries(item).flatMap(([key, nested]) => {
-    if (!/url|template|api/i.test(key)) return [];
-    return menuTypeUrlTemplates(nested, depth + 1);
-  });
-}
-
-type DirectoryMealType = { slug: string; upstreamSlug: string; urls: string[] };
-
-function directoryMealTypeTargets(entry: JsonRecord): DirectoryMealType[] {
-  const raw = entry.active_menu_types ?? entry.menu_types ?? entry.menuTypes ?? entry.menu_type_options ?? entry.menus;
-  if (!Array.isArray(raw)) return [];
-  const bySlug = new Map<string, DirectoryMealType>();
-  for (const value of raw) {
-    const item = record(value);
-    const upstreamSlug = stringValue(typeof value === "string" ? value : item?.slug ?? item?.menu_type ?? item?.id ?? item?.name ?? item?.title);
-    const slug = menuTypeSlug(upstreamSlug);
-    if (!slug) continue;
-    const existing = bySlug.get(slug);
-    const urls = menuTypeUrlTemplates(value);
-    bySlug.set(slug, { slug, upstreamSlug: existing?.upstreamSlug || upstreamSlug, urls: Array.from(new Set([...(existing?.urls ?? []), ...urls])) });
-  }
-  return Array.from(bySlug.values());
-}
-
-const LOCATION_ALIASES: Record<string, string[]> = {
-  "hopkins-cafe": ["hopkins cafe", "fresh food cafe", "ffc"],
-  "nolans-on-33rd": ["nolan", "nolan's", "nolans", "nolans on 33rd", "nolan's on 33rd"],
-  "levering-kitchens": ["levering kitchens", "levering kitchen"],
-  "levering-cafe": ["levering cafe", "levering café"],
-  "peabody-institute": ["peabody", "peabody institute", "peabody dining hall"],
-};
-
-const LOCATION_SCHOOL_ALIASES: Record<string, string[]> = {
-  "hopkins-cafe": ["hopkins-cafe", "fresh-food-cafe", "ffc"],
-  "nolans-on-33rd": ["nolans-on-33rd", "nolans", "nolan"],
-  "levering-kitchens": ["site-1", "levering-kitchens", "levering-kitchen"],
-  "levering-cafe": ["levering-cafe/cafe", "levering-cafe", "cafe"],
-  "peabody-institute": ["peabody-institute", "peabody", "peabody-dining-hall"],
-};
-
-function matchScore(location: NutrisliceLocation, entry: { slug: string; name: string }) {
-  const candidates = [location.name, location.school, ...(LOCATION_ALIASES[location.id] ?? [])].map(normalizedText).filter(Boolean);
-  const slug = normalizedText(entry.slug);
-  const name = normalizedText(entry.name);
-  return candidates.reduce((score, candidate) => {
-    if (slug === candidate || name === candidate) return Math.max(score, 100);
-    if (slug.includes(candidate) || name.includes(candidate)) return Math.max(score, 70);
-    if (candidate.includes(slug) || candidate.includes(name)) return Math.max(score, 50);
-    return score;
-  }, 0);
-}
-
-/** Resolve current school slugs and menu types from Nutrislice's directory when available. */
+/** School and menu slugs are identifiers, never display labels to shorten or guess. */
 export function resolveMenuTargets(payload: unknown): MenuTarget[] {
-  const entries = directoryEntries(payload).map(directorySchool);
-  return HOPKINS_LOCATIONS.map((location) => {
-    const match = entries
-      .map((entry) => ({ ...entry, score: matchScore(location, entry) }))
-      .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score)[0];
-    const schools = Array.from(new Set([
-      match?.slug,
-      location.school,
-      ...(LOCATION_SCHOOL_ALIASES[location.id] ?? []),
-    ].filter((value): value is string => Boolean(value))));
-    const school = schools[0] || location.school;
-    const directoryTypes = match ? directoryMealTypeTargets(match.merged) : [];
-    const mealTypes = directoryTypes.map((item) => item.slug);
-    const menuTypeUrls = Object.fromEntries(directoryTypes.map((item) => [item.slug, item.urls]));
-    const menuTypeValues = Object.fromEntries(directoryTypes.map((item) => [item.slug, item.upstreamSlug]));
-    return { location, school, schools, mealTypes: mealTypes.length ? mealTypes : [...MENU_TYPES], menuTypeUrls, menuTypeValues };
-  });
+  const targets = new Map<string, MenuTarget>();
+  for (const entry of directoryEntries(payload)) {
+    const school = stringValue(entry.slug);
+    const name = stringValue(entry.name);
+    if (!school || !name || !/^[a-zA-Z0-9_-]+$/.test(school)) continue;
+    const known = HOPKINS_LOCATIONS.find((location) =>
+      location.school === school || normalizedText(location.name) === normalizedText(name));
+    const location = {
+      id: known?.id ?? school,
+      name: known?.name ?? name,
+      school,
+      menuUrl: `https://hopkinsdining.nutrislice.com/menu/${encodeURIComponent(school)}`,
+    };
+    const rawMenus = entry.active_menu_types ?? entry.menu_types;
+    if (!Array.isArray(rawMenus)) continue;
+    const mealNames: Record<string, string> = Object.create(null);
+    for (const value of rawMenus) {
+      const menu = record(value);
+      const slug = stringValue(typeof value === "string" ? value : menu?.slug);
+      if (slug && /^[a-zA-Z0-9_-]+$/.test(slug)) mealNames[slug] = stringValue(menu?.name) || titleCase(slug);
+    }
+    targets.set(location.id, { location, school, mealTypes: Object.keys(mealNames), mealNames });
+  }
+  return Array.from(targets.values());
 }
 
 function numberValue(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
   return 0;
+}
+
+function validNutritionValue(value: unknown) {
+  return (typeof value === "number" || typeof value === "string" && value.trim() !== "") && Number.isFinite(Number(value)) && Number(value) >= 0;
 }
 
 function dateMatches(value: unknown, date: string) {
@@ -227,13 +152,21 @@ function arrayRecords(value: unknown) {
   return Array.isArray(value) ? value.map(record).filter((item): item is JsonRecord => Boolean(item)) : [];
 }
 
+function withStations(items: JsonRecord[]): JsonRecord[] {
+  let stationName = "";
+  return items.map((item) => {
+    if (item.is_section_title || item.is_station_header) stationName = stringValue(item.text);
+    return { ...item, stationName };
+  });
+}
+
 function itemsFromContainer(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return arrayRecords(value);
   const container = record(value);
   if (!container) return [];
   for (const key of ["menu_items", "menuItems", "items", "food_items", "foods"]) {
     const items = arrayRecords(container[key]);
-    if (items.length || Array.isArray(container[key])) return items;
+    if (items.length || Array.isArray(container[key])) return withStations(items);
   }
   for (const key of ["menu", "day"]) {
     const nested = itemsFromContainer(container[key]);
@@ -273,7 +206,7 @@ function iconNames(food: JsonRecord) {
   return candidates.flatMap((candidate) => Array.isArray(candidate) ? candidate.map((icon) => {
     if (typeof icon === "string") return icon.trim();
     const iconRecord = record(icon);
-    return stringValue(iconRecord?.name ?? iconRecord?.synced_name);
+    return stringValue(iconRecord?.synced_name || iconRecord?.name);
   }) : []).filter(Boolean);
 }
 
@@ -319,6 +252,7 @@ function normalizeFoodAddOns(item: JsonRecord, food: JsonRecord, parentId: strin
     if (seen.has(id)) return [];
     seen.add(id);
     const nutrition = record(raw.rounded_nutrition_info) ?? record(raw.nutrition_info) ?? record(candidate.rounded_nutrition_info) ?? {};
+    if ([nutrition.calories ?? raw.calories, nutrition.g_protein ?? raw.protein, nutrition.g_carbs ?? raw.carbs, nutrition.g_fat ?? raw.fat].some((value) => !validNutritionValue(value))) return [];
     const servingInfo = record(raw.serving_size_info) ?? record(candidate.serving_size_info) ?? {};
     return [{
       id,
@@ -345,8 +279,9 @@ const ALLERGEN_NAMES = new Set(["milk", "wheat", "soy", "egg", "eggs", "fish", "
 
 export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation, mealType: string, date: string): NormalizedFood | null {
   if (item.is_section_title === true || item.is_station_header === true || item.is_holiday === true) return null;
-  const rawFood = record(item.food) ?? item;
-  const name = stringValue(rawFood.name ?? item.text);
+  const rawFood = record(item.food) ?? (typeof item.name === "string" ? item : null);
+  if (!rawFood) return null;
+  const name = stringValue(rawFood.name);
   if (!name) return null;
 
   const nutrition = record(rawFood.rounded_nutrition_info) ?? record(rawFood.nutrition_info) ?? record(item.rounded_nutrition_info) ?? {};
@@ -360,6 +295,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
   const servingAmount = servingInfo.serving_size_amount ?? rawFood.serving_size_amount ?? item.serving_size_amount ?? "1";
   const servingUnit = servingInfo.serving_size_unit ?? rawFood.serving_size_unit ?? item.serving_size_unit ?? "serving";
   const mealName = titleCase(mealType);
+  const missingNutrition = Object.entries({ calories: nutrition.calories ?? rawFood.calories, protein: nutrition.g_protein ?? rawFood.protein, carbs: nutrition.g_carbs ?? rawFood.carbs, fat: nutrition.g_fat ?? rawFood.fat }).filter(([, value]) => !validNutritionValue(value)).map(([key]) => key);
 
   return {
     id: `nutrislice-${location.id}-${String(rawId)}-${mealType}`,
@@ -369,6 +305,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     locationName: location.name,
     menuUrl: location.menuUrl,
     mealPeriods: [mealName],
+    menuType: mealType,
     servingSize: `${String(servingAmount)} ${String(servingUnit)}`.trim(),
     allergens,
     tags,
@@ -377,23 +314,34 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     protein: numberValue(nutrition.g_protein ?? rawFood.protein ?? item.protein),
     carbs: numberValue(nutrition.g_carbs ?? rawFood.carbs ?? item.carbs),
     fat: numberValue(nutrition.g_fat ?? rawFood.fat ?? item.fat),
+    missingNutrition,
+    stationName: stringValue(item.stationName) || undefined,
     updatedAt: date,
   };
 }
 
-export function makeMenuResponse(date: string, results: Array<{ location: NutrisliceLocation; mealType: string; items: JsonRecord[] }>, errors: MenuResponse["errors"], fetchedAt: string): MenuResponse {
-  const foods = results.flatMap((result) => result.items.map((item) => normalizeMenuItem(item, result.location, result.mealType, date)).filter((item): item is NormalizedFood => Boolean(item)));
-  const uniqueFoods = Array.from(new Map(foods.map((food) => [food.id, food])).values());
-  const locations = HOPKINS_LOCATIONS.map((location) => ({
-    ...location,
-    meals: Array.from(new Set([
-      ...MENU_TYPES,
-      ...results.filter((result) => result.location.id === location.id).map((result) => result.mealType),
-    ])).map((mealType) => ({
-      id: `${location.id}-${mealType}`,
-      name: titleCase(mealType),
-      foods: uniqueFoods.filter((food) => food.locationId === location.id && food.mealPeriods.includes(titleCase(mealType))),
-    })),
+export type MenuResult = { location: NutrisliceLocation; mealType: string; mealName?: string; menuUrl?: string; items: JsonRecord[] };
+
+export function makeMenuResponse(date: string, results: MenuResult[], errors: MenuResponse["errors"], fetchedAt: string, targets: MenuTarget[] = []): MenuResponse {
+  const foods = results.flatMap((result) => result.items.flatMap((item) => {
+    const food = normalizeMenuItem(item, result.location, result.mealType, date);
+    return food ? [{ ...food, menuUrl: result.menuUrl ?? food.menuUrl, mealPeriods: [result.mealName ?? titleCase(result.mealType)] }] : [];
   }));
-  return { ok: true, date, fetchedAt, source: "hopkins-nutrislice", partial: errors.length > 0, locations, foods: uniqueFoods, errors };
+  const uniqueFoods = Array.from(new Map(foods.map((food) => [food.id, food])).values());
+  const allLocations = new Map([...HOPKINS_LOCATIONS, ...targets.map((target) => target.location), ...results.map((result) => result.location)].map((location) => [location.id, location]));
+  const locations: NormalizedLocation[] = Array.from(allLocations.values()).map((location) => {
+    const menus = results.filter((result) => result.location.id === location.id);
+    const available = uniqueFoods.some((food) => food.locationId === location.id);
+    const failed = !targets.some((target) => target.location.id === location.id) || errors.some((error) => error.locationId === location.id || error.locationId === "proxy");
+    return {
+      ...location,
+      status: available ? "available" : failed ? "unavailable" : "empty",
+      meals: menus.map((menu) => ({
+        id: `${location.id}-${menu.mealType}`,
+        name: menu.mealName ?? titleCase(menu.mealType),
+        foods: uniqueFoods.filter((food) => food.locationId === location.id && food.menuType === menu.mealType),
+      })),
+    };
+  });
+  return { ok: true, schemaVersion: 6, date, fetchedAt, source: "hopkins-nutrislice", partial: errors.length > 0, locations, foods: uniqueFoods, errors };
 }

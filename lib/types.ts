@@ -20,6 +20,8 @@ export type Food = Nutrition & {
   tags: string[];
   addOns?: FoodAddOn[];
   updatedAt: string;
+  missingNutrition?: string[];
+  stationName?: string;
 };
 
 export type FoodAddOn = Nutrition & {
