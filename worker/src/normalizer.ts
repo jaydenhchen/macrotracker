@@ -357,6 +357,9 @@ export function makeMenuResponse(date: string, results: MenuResult[], errors: Me
     unique.set(key, {
       ...(preferNewNutrition ? food : existing),
       id: existing.id,
+      // Preserve station context if an earlier duplicate came from a menu response
+      // without section headings; build-your-own choices depend on this grouping.
+      stationName: existing.stationName || food.stationName,
       mealPeriods: Array.from(new Set([...existing.mealPeriods, ...food.mealPeriods])),
       menuTypes: Array.from(new Set([...existing.menuTypes, ...food.menuTypes])),
       allergens: Array.from(new Set([...existing.allergens, ...food.allergens])),
