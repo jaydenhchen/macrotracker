@@ -61,7 +61,6 @@ test('deduplicating repeated foods retains station context from a later menu res
   assert.equal(result.foods.length, 1);
   assert.equal(result.foods[0].stationName, 'Build Your Own');
 });
-
 test('empty or malformed directory produces a useful error and no fictional foods', async () => {
   global.fetch = async () => json([]);
   const result = await fetchMenu('2026-10-21');
