@@ -264,12 +264,44 @@ test('duplicate menu rows retain station and add-on metadata', async () => {
 test('Planters added-sugar values drive the no-added-sugar filter', () => {
   const { FOODS } = require('../lib/catalog.ts');
   const { matchesFoodTags } = require('../lib/food-filters.ts');
-  const peanuts = FOODS.filter((food) => food.locationId === 'charles-market');
+  const peanuts = FOODS.filter((food) => food.id.startsWith('charles-market-planters-'));
   assert.deepEqual(peanuts.map((food) => food.addedSugar), [0, 1, 4, 0, 3]);
   assert.deepEqual(peanuts.filter((food) => matchesFoodTags(food, ['no-added-sugar'])).map((food) => food.name), [
     'PLANTERS Salted Peanuts',
     'PLANTERS HEAT Peanuts',
   ]);
+});
+
+test('Charles Market contains every listed York Street food with explicit macro coverage and API parity', () => {
+  const fs = require('node:fs');
+  const { FOODS, CHARLES_MARKET_FOODS } = require('../lib/catalog.ts');
+  const ysmFoods = CHARLES_MARKET_FOODS.filter((food) => food.id.startsWith('charles-market-ysm-'));
+  assert.equal(CHARLES_MARKET_FOODS.length, 230);
+  assert.equal(ysmFoods.length, 225);
+  assert.equal(new Set(FOODS.map((food) => food.id)).size, FOODS.length);
+  assert.ok(ysmFoods.every((food) => food.locationName === 'Charles Market' && food.catalogPage >= 3 && food.catalogPage <= 22 && food.catalogItemCode));
+
+  const macroKeys = ['calories', 'protein', 'carbs', 'fat'];
+  const verified = ysmFoods.filter((food) => !food.missingNutrition?.length);
+  const unavailable = ysmFoods.filter((food) => food.missingNutrition?.length);
+  assert.equal(verified.length, 44);
+  assert.equal(unavailable.length, 181);
+  assert.ok(verified.every((food) => food.nutritionSourceUrl && macroKeys.every((key) => typeof food[key] === 'number')));
+  assert.ok(unavailable.every((food) => macroKeys.every((key) => food.missingNutrition.includes(key)) && !food.nutritionSourceUrl));
+
+  const turkeyWedge = ysmFoods.find((food) => food.name === 'Turkey & Cheddar Wedge');
+  assert.equal(turkeyWedge.upc, '672975611484');
+  assert.match(turkeyWedge.nutritionSourceUrl, /0672975611484/);
+  assert.deepEqual([turkeyWedge.calories, turkeyWedge.protein, turkeyWedge.carbs, turkeyWedge.fat], [580, 31, 61, 21]);
+  const per100gWrap = ysmFoods.find((food) => food.name === 'Ham & Cheddar Wrap');
+  assert.equal(per100gWrap.servingSize, '100 g');
+  assert.deepEqual([per100gWrap.calories, per100gWrap.protein, per100gWrap.carbs, per100gWrap.fat], [177.3, 10.28, 19.5, 5.67]);
+  const unavailableFood = ysmFoods.find((food) => food.name === 'Asiago Turkey');
+  assert.deepEqual(unavailableFood.missingNutrition, macroKeys);
+
+  const api = JSON.parse(fs.readFileSync('public/api/v1/foods.json', 'utf8'));
+  assert.equal(api.meta.total, FOODS.length);
+  assert.deepEqual(api.data, FOODS);
 });
 
 function cacheFixture() {

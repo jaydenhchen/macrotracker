@@ -219,8 +219,10 @@ select.plain-input { cursor: pointer; }
 .menu-notice button { margin-left: 10px; }
 .food-modal .menu-notice { margin: 0 25px 12px; }
 .nutrition-unavailable { color: #73552f; font-size: 11px; line-height: 1.5; padding: 8px 0; }
+.nutrition-warning { margin: 14px 0; border: 1px solid #f0dfc8; border-radius: 10px; background: #fff9f0; color: #73552f; padding: 10px 12px; font-size: 11px; line-height: 1.5; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 .date-label { position: relative; display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .date-label input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .date-label input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
 @media (max-width: 430px) { .food-modal .modal-controls { grid-template-columns: 1fr 1fr; } .food-modal .modal-controls > .select-field:last-child { grid-column: 1 / -1; } }
+@media (max-width: 720px) { .food-toolbar .search-field { flex: 0 0 43px; min-width: 0; } }
