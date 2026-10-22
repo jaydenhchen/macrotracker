@@ -31,6 +31,8 @@ import {
 import { DEFAULT_STATE, dateKey, exportState, loadState, normalizeState, saveState } from "@/lib/storage";
 import { mealNutritionBasis, nutritionForMeal, resizeMealEntry } from "@/lib/nutrition";
 import { matchesFoodTags } from "@/lib/food-filters";
+import { addOnsForFood, missingAddOnNutrition } from "@/lib/customization";
+import { CHARLES_MARKET_FOODS, CHARLES_MARKET_MENU_URL } from "@/lib/catalog";
 import { fetchTodayMenu, NUTRISLICE_LOCATIONS, type MenuLocation } from "@/lib/nutrislice";
 import { DayLog, Food, FoodAddOn, Goals, MacroEntry, MealAddOn, MealEntry, MealName, MEALS, Nutrition, TrackerState, UserProfile, WaterEntry, WeightEntry } from "@/lib/types";
 
@@ -49,8 +51,6 @@ const MACRO_META: { key: keyof Nutrition; label: string; color: string; soft: st
   { key: "carbs", label: "Carbs", color: "#2a8d78", soft: "#e4f6f1", unit: "g" },
   { key: "fat", label: "Fat", color: "#8b69c2", soft: "#f0ebfa", unit: "g" },
 ];
-
-const ADD_ON_FOOD_PATTERN = /burrito|bowl|salad|wrap|sandwich|taco|quesadilla|pita|plate|build.?your.?own/i;
 
 const FOOD_TAG_FILTERS = [
   { value: "all", label: "All dietary tags" },
@@ -73,6 +73,16 @@ const FOOD_SORT_OPTIONS = [
   { value: "calories-asc", label: "Lowest calories" },
   { value: "calories-desc", label: "Highest calories" },
 ] as const;
+const CHARLES_MARKET_MENU_LOCATION: MenuLocation = {
+  id: "charles-market",
+  name: "Charles Market",
+  menuUrl: CHARLES_MARKET_MENU_URL,
+  status: "available",
+};
+
+function withCharlesMarket(locations: MenuLocation[]): MenuLocation[] {
+  return [...locations.filter((location) => location.id !== CHARLES_MARKET_MENU_LOCATION.id), CHARLES_MARKET_MENU_LOCATION];
+}
 
 function blankMeals(): Record<string, MealEntry[]> {
   return {};
@@ -119,16 +129,6 @@ function scaleAddOn(addOn: FoodAddOn, quantity: number): Nutrition {
     carbs: Math.round(addOn.carbs * quantity * 10) / 10,
     fat: Math.round(addOn.fat * quantity * 10) / 10,
   };
-}
-
-function addOnsForFood(food: Food, foods: Food[]): FoodAddOn[] {
-  if (food.addOns?.length) return food.addOns;
-  if (!food.stationName || !ADD_ON_FOOD_PATTERN.test(food.name)) return [];
-  return foods.filter((option) => option.id !== food.id && option.locationId === food.locationId && option.stationName === food.stationName && option.mealPeriods.some((meal) => food.mealPeriods.includes(meal)) && !option.missingNutrition?.length).map((option) => ({
-    id: option.id, name: option.name, servingSize: option.servingSize,
-    category: /chicken|steak|beef|pork|turkey|fish|tofu|tempeh|falafel|egg/i.test(option.name) ? "protein" as const : "topping" as const,
-    calories: option.calories, protein: option.protein, carbs: option.carbs, fat: option.fat,
-  }));
 }
 
 function displayFoodTags(food: Food) {
@@ -203,9 +203,23 @@ function collectFoodUsage(dayLogs: TrackerState["dayLogs"]): Map<string, FoodUsa
   return usage;
 }
 
+function foodUsageFor(food: Food, usage: FoodUsageMap): FoodUsage | undefined {
+  let totals = usage.get(food.id);
+  for (const id of food.legacyIds ?? []) {
+    const aliasUsage = usage.get(id);
+    if (!aliasUsage) continue;
+    totals = totals ? {
+      count: totals.count + aliasUsage.count,
+      servings: totals.servings + aliasUsage.servings,
+      lastLoggedDate: aliasUsage.lastLoggedDate > totals.lastLoggedDate ? aliasUsage.lastLoggedDate : totals.lastLoggedDate,
+    } : aliasUsage;
+  }
+  return totals;
+}
+
 function sortFoodsByUsage(foods: Food[], usage: FoodUsageMap): Food[] {
   return foods
-    .map((food, index) => ({ food, index, stats: usage.get(food.id) }))
+    .map((food, index) => ({ food, index, stats: foodUsageFor(food, usage) }))
     .sort((a, b) => {
       const countDifference = (b.stats?.count ?? 0) - (a.stats?.count ?? 0);
       if (countDifference) return countDifference;
@@ -223,7 +237,7 @@ function sortFoods(foods: Food[], usage: FoodUsageMap, sortBy: string) {
     if (missingDifference) return missingDifference;
     const difference = left[key] - right[key];
     if (difference) return direction === "asc" ? difference : -difference;
-    return (usage.get(right.id)?.count ?? 0) - (usage.get(left.id)?.count ?? 0);
+    return (foodUsageFor(right, usage)?.count ?? 0) - (foodUsageFor(left, usage)?.count ?? 0);
   });
 }
 
@@ -325,8 +339,8 @@ export default function Page() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft>(DEFAULT_ONBOARDING_DRAFT);
-  const [menuFoods, setMenuFoods] = useState<Food[]>([]);
-  const [menuLocations, setMenuLocations] = useState<MenuLocation[]>(NUTRISLICE_LOCATIONS.map((location) => ({ ...location, status: "unavailable" })));
+  const [menuFoods, setMenuFoods] = useState<Food[]>(CHARLES_MARKET_FOODS);
+  const [menuLocations, setMenuLocations] = useState<MenuLocation[]>(withCharlesMarket(NUTRISLICE_LOCATIONS.map((location) => ({ ...location, status: "unavailable" }))));
   const [menuRetry, setMenuRetry] = useState(0);
   const [menuStatus, setMenuStatus] = useState<"loading" | "live" | "cached" | "unavailable">("loading");
   const [menuFetchedAt, setMenuFetchedAt] = useState("");
@@ -358,21 +372,21 @@ export default function Page() {
     if (!hydrated) return;
     const controller = new AbortController();
     setMenuStatus("loading");
-    setMenuFoods([]);
+    setMenuFoods(CHARLES_MARKET_FOODS);
     setMenuFetchedAt("");
     setMenuPartial(false);
-    setMenuLocations(NUTRISLICE_LOCATIONS.map((location) => ({ ...location, status: "unavailable" })));
+    setMenuLocations(withCharlesMarket(NUTRISLICE_LOCATIONS.map((location) => ({ ...location, status: "unavailable" }))));
     setSelectedFood(null);
     fetchTodayMenu(selectedDate, controller.signal).then((result) => {
       if (controller.signal.aborted) return;
-      setMenuFoods(result.foods);
-      setMenuLocations(result.locations);
+      setMenuFoods([...result.foods, ...CHARLES_MARKET_FOODS]);
+      setMenuLocations(withCharlesMarket(result.locations));
       setMenuStatus(result.mode);
       setMenuFetchedAt(result.fetchedAt);
       setMenuPartial(result.partial);
     }).catch(() => {
       if (controller.signal.aborted) return;
-      setMenuFoods([]);
+      setMenuFoods(CHARLES_MARKET_FOODS);
       setMenuStatus("unavailable");
     });
     return () => controller.abort();
@@ -382,13 +396,23 @@ export default function Page() {
   const totals = useMemo(() => sumDay(day), [day]);
   const foodUsage = useMemo(() => collectFoodUsage(state.dayLogs), [state.dayLogs]);
   const foodCatalog = useMemo(() => {
-    const loggedSnapshots = Object.values(state.dayLogs)
-      .flatMap((log) => Object.values(log.meals).flat())
-      .reduce((foods, entry) => foods.set(entry.foodId, foodSnapshotFromEntry(entry)), new Map<string, Food>());
-    return Array.from(new Map([...Array.from(loggedSnapshots.values()), ...menuFoods].map((food) => [food.id, food])).values());
+    const knownMenuIds = new Set(menuFoods.map((food) => food.id));
+    for (const food of menuFoods) for (const id of food.legacyIds ?? []) knownMenuIds.add(id);
+    const loggedSnapshots = new Map<string, Food>();
+    for (const entry of Object.values(state.dayLogs).flatMap((log) => Object.values(log.meals).flat())) {
+      if (!knownMenuIds.has(entry.foodId)) loggedSnapshots.set(entry.foodId, foodSnapshotFromEntry(entry));
+    }
+    return [...Array.from(loggedSnapshots.values()), ...menuFoods];
   }, [menuFoods, state.dayLogs]);
-  const mostLoggedFoods = useMemo(() => sortFoodsByUsage(foodCatalog.filter((food) => foodUsage.has(food.id)), foodUsage), [foodCatalog, foodUsage]);
-  const favoriteFoods = useMemo(() => state.favorites.map((id) => foodCatalog.find((food) => food.id === id)).filter(Boolean) as Food[], [state.favorites, foodCatalog]);
+  const mostLoggedFoods = useMemo(() => sortFoodsByUsage(foodCatalog.filter((food) => foodUsageFor(food, foodUsage)), foodUsage), [foodCatalog, foodUsage]);
+  const favoriteFoods = useMemo(() => {
+    const favorites = new Map<string, Food>();
+    for (const id of state.favorites) {
+      const food = foodCatalog.find((candidate) => candidate.id === id || candidate.legacyIds?.includes(id));
+      if (food) favorites.set(food.id, food);
+    }
+    return Array.from(favorites.values());
+  }, [state.favorites, foodCatalog]);
 
   function updateDay(updater: (current: ReturnType<typeof emptyDay>) => ReturnType<typeof emptyDay>) {
     setState((current) => ({
@@ -466,7 +490,18 @@ export default function Page() {
   }
 
   function toggleFavorite(foodId: string) {
-    setState((current) => ({ ...current, favorites: current.favorites.includes(foodId) ? current.favorites.filter((id) => id !== foodId) : [...current.favorites, foodId] }));
+    const selectedFood = foodCatalog.find((food) => food.id === foodId || food.legacyIds?.includes(foodId));
+    const relatedIds = selectedFood?.legacyIds ?? [];
+    const canonicalId = selectedFood?.id ?? foodId;
+    setState((current) => {
+      const isFavorite = current.favorites.some((id) => id === foodId || id === canonicalId || relatedIds.includes(id));
+      return {
+        ...current,
+        favorites: isFavorite
+          ? current.favorites.filter((id) => id !== foodId && id !== canonicalId && !relatedIds.includes(id))
+          : [...current.favorites, canonicalId],
+      };
+    });
   }
 
   function moveDate(amount: number) {
@@ -624,7 +659,7 @@ function TodayView({ day, totals, goals, waterGoal, favoriteFoods, mostLoggedFoo
     <MacroSources day={day} onRemoveMacroEntry={onRemoveMacroEntry} />
 
     <section className="section-heading quick-heading"><div><p className="eyebrow">Make it easy</p><h2>{mostLoggedFoods.length ? "Most logged by you" : "Quick add"}</h2></div><span className="section-note">{mostLoggedFoods.length ? "Sorted from your on-device history" : "Star foods you love"}</span></section>
-    <section className="quick-grid">{[...mostLoggedFoods, ...favoriteFoods.filter((food) => !mostLoggedFoods.some((logged) => logged.id === food.id))].slice(0, 4).map((food) => <QuickFoodCard key={food.id} food={food} loggedCount={foodUsage.get(food.id)?.count ?? 0} isFavorite={favoriteFoods.some((fav) => fav.id === food.id)} onAdd={() => onOpenAdd("Snacks", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}{mostLoggedFoods.length === 0 && favoriteFoods.length === 0 && <div className="empty-inline">Log a food or star a favorite and it’ll show up here.</div>}</section>
+    <section className="quick-grid">{[...mostLoggedFoods, ...favoriteFoods.filter((food) => !mostLoggedFoods.some((logged) => logged.id === food.id))].slice(0, 4).map((food) => <QuickFoodCard key={food.id} food={food} loggedCount={foodUsageFor(food, foodUsage)?.count ?? 0} isFavorite={favoriteFoods.some((fav) => fav.id === food.id)} onAdd={() => onOpenAdd("Snacks", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}{mostLoggedFoods.length === 0 && favoriteFoods.length === 0 && <div className="empty-inline">Log a food or star a favorite and it’ll show up here.</div>}</section>
   </>;
 }
 
@@ -715,7 +750,7 @@ function FoodsView({ foods: sourceFoods, partial, locations, onRetry, menuStatus
   return <>
     <section className="welcome-row compact"><div><p className="eyebrow">Hopkins dining today</p><h1>Find your <span>fuel.</span></h1><p className="subhead">What’s actually on the menu, with nutrition when Hopkins provides it.</p></div><div className={`api-badge ${menuStatus}`}><span className="status-dot" />{menuStatus === "live" ? (partial ? "Partial Hopkins menu" : "Live Nutrislice menu") : menuStatus === "loading" ? "Loading menu" : menuStatus === "cached" ? "Saved Hopkins menu" : "Menu unavailable"}</div></section>
     <div className="catalog-disclaimer">{menuStatus === "live" ? (partial ? "Some meal menus could not be loaded. Refresh to try again, or check the official Hopkins menu for the complete selection." : "Menus and nutrition come directly from Hopkins Dining. Check the official menu for recipes, portions, and allergen details.") : menuStatus === "cached" ? "Showing a saved Hopkins menu for the selected date, downloaded within the last 24 hours. The live feed is temporarily unavailable." : menuStatus === "loading" ? "Checking Hopkins Dining’s menus for the selected date…" : "Hopkins’ menus could not be loaded for this date. Try again or open the official menu."} <a href={NUTRISLICE_LOCATIONS[0].menuUrl} target="_blank" rel="noreferrer">Open Hopkins menus ↗</a></div>
-    <div className="menu-locations">{locations.map((item) => <div className="menu-location" key={item.id}><strong>{item.name}</strong><span>{menuStatus === "loading" ? "Checking menu…" : item.status === "available" ? `${sourceFoods.filter((food) => food.locationId === item.id).length} foods` : item.status === "empty" ? "No menu published for this date" : "Menu unavailable"}</span><a href={item.menuUrl} target="_blank" rel="noreferrer">Official menu ↗</a></div>)}</div>
+    <div className="menu-locations">{locations.map((item) => <div className="menu-location" key={item.id}><strong>{item.name}</strong><span>{menuStatus === "loading" ? "Checking menu…" : item.status === "available" ? `${sourceFoods.filter((food) => food.locationId === item.id).length} foods` : item.status === "empty" ? "No menu published for this date" : "Menu unavailable"}</span><a href={item.menuUrl} target="_blank" rel="noreferrer">{item.id === "charles-market" ? "York Street Market Grab-&-Go ↗" : "Official menu ↗"}</a></div>)}</div>
     {menuStatus !== "loading" && <button className="secondary-button" type="button" onClick={onRetry}>Refresh menus</button>}
     <section className="food-toolbar">
       <label className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search today’s foods, tags, or ingredients" /><kbd>⌘ K</kbd></label>
@@ -725,12 +760,12 @@ function FoodsView({ foods: sourceFoods, partial, locations, onRetry, menuStatus
     </section>
     <div className="catalog-meta"><span>{foods.length} items available · {menuStatus === "live" ? "live Hopkins menu" : menuStatus === "cached" ? "saved Hopkins menu" : "menu pending"}</span><span>{sortBy === "logged" ? (foodUsage.size ? "Most logged first · " : "Alphabetical until you log food · ") : `${FOOD_SORT_OPTIONS.find((option) => option.value === sortBy)?.label} · `}{fetchedLabel} · Nutrition values per serving</span></div>
     {!foods.length && <div className="empty-state card"><Search size={24} /><strong>{menuStatus === "loading" ? "Loading Hopkins menus…" : menuStatus === "unavailable" ? "Menus are temporarily unavailable" : "No matching foods for this date"}</strong><span>Try another date or location, clear the dietary filters, or check the official menu above.</span></div>}
-    <section className="food-grid">{foods.map((food) => <CatalogFoodCard key={food.id} food={food} loggedCount={foodUsage.get(food.id)?.count ?? 0} saved={favoriteFoods.some((item) => item.id === food.id)} onAdd={() => onOpenAdd("Lunch", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}</section>
+    <section className="food-grid">{foods.map((food) => <CatalogFoodCard key={food.id} food={food} loggedCount={foodUsageFor(food, foodUsage)?.count ?? 0} saved={favoriteFoods.some((item) => item.id === food.id)} onAdd={() => onOpenAdd("Lunch", food)} onToggleFavorite={() => onToggleFavorite(food.id)} />)}</section>
   </>;
 }
 
 function CatalogFoodCard({ food, loggedCount, saved, onAdd, onToggleFavorite }: { food: Food; loggedCount: number; saved: boolean; onAdd: () => void; onToggleFavorite: () => void }) {
-  return <article className="catalog-food-card card"><div className="catalog-food-top"><FoodTags food={food} /><button className={`favorite-button ${saved ? "saved" : ""}`} onClick={onToggleFavorite}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button></div><div className="food-location">{food.locationName}</div><h3>{food.name}</h3><p>{food.description}</p><div className="nutrition-strip">{MACRO_META.map((macro) => <span key={macro.key}><strong>{food.missingNutrition?.includes(macro.key) ? "—" : `${food[macro.key]}${macro.key === "calories" ? "" : "g"}`}</strong> {macro.label.toLowerCase()}</span>)}</div>{food.missingNutrition?.length ? <p className="nutrition-unavailable">Hopkins has not published complete nutrition. Check the official menu before logging.</p> : null}{food.menuUrl && <a className="official-menu-link" href={food.menuUrl} target="_blank" rel="noreferrer">View on Hopkins Dining ↗</a>}<div className="food-card-footer"><span>{loggedCount ? `Logged ${loggedCount}×` : food.servingSize}</span><button className="small-add" disabled={Boolean(food.missingNutrition?.length)} onClick={onAdd}><Plus size={15} /> Log food</button></div></article>;
+  return <article className="catalog-food-card card"><div className="catalog-food-top"><FoodTags food={food} /><button className={`favorite-button ${saved ? "saved" : ""}`} onClick={onToggleFavorite}><Heart size={17} fill={saved ? "currentColor" : "none"} /></button></div><div className="food-location">{food.locationName}</div><h3>{food.name}</h3><p>{food.description}</p><div className="nutrition-strip">{MACRO_META.map((macro) => <span key={macro.key}><strong>{food.missingNutrition?.includes(macro.key) ? "—" : `${food[macro.key]}${macro.key === "calories" ? "" : "g"}`}</strong> {macro.label.toLowerCase()}</span>)}</div>{food.missingNutrition?.length ? <p className="nutrition-unavailable">Hopkins has not published complete nutrition. Check the official menu before logging.</p> : null}{food.menuUrl && <a className="official-menu-link" href={food.menuUrl} target="_blank" rel="noreferrer">{food.locationId === "charles-market" ? "View product info ↗" : "View on Hopkins Dining ↗"}</a>}<div className="food-card-footer"><span>{loggedCount ? `Logged ${loggedCount}×` : food.servingSize}</span><button className="small-add" disabled={Boolean(food.missingNutrition?.length)} onClick={onAdd}><Plus size={15} /> Log food</button></div></article>;
 }
 
 function AddFoodModal({ foods, allFoods, locations, menuStatus, meal, query, location, tagFilters, selectedFood, servings, foodUsage, setQuery, setLocation, setTagFilters, setMeal, setSelectedFood, setServings, onAdd, onClose, onToggleFavorite, favoriteIds }: { foods: Food[]; allFoods: Food[]; locations: MenuLocation[]; menuStatus: "loading" | "live" | "cached" | "unavailable"; meal: MealName; query: string; location: string; tagFilters: string[]; selectedFood: Food | null; servings: number; foodUsage: FoodUsageMap; setQuery: (value: string) => void; setLocation: (value: string) => void; setTagFilters: (value: string[]) => void; setMeal: (value: MealName) => void; setSelectedFood: (food: Food | null) => void; setServings: (value: number) => void; onAdd: (addOns: MealAddOn[]) => void; onClose: () => void; onToggleFavorite: (foodId: string) => void; favoriteIds: string[] }) {
@@ -754,7 +789,7 @@ function AddFoodModal({ foods, allFoods, locations, menuStatus, meal, query, loc
     setSelectedAddOns((current) => ({ ...current, [addOn.id]: Math.min(4, Math.max(0, Math.round(amount * 4) / 4)) }));
   }
 
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="food-modal" role="dialog" aria-modal="true" aria-labelledby="add-food-title"><div className="modal-header"><div><p className="eyebrow">Build your log</p><h2 id="add-food-title">Add a food</h2></div><button className="close-button" onClick={onClose}><X size={19} /></button></div><div className="modal-controls"><label className="search-field"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the dining catalog" /></label><label className="select-field"><select aria-label="Filter by location" value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><TagFilterMenu selected={tagFilters} onChange={setTagFilters} /><label className="select-field"><select aria-label="Sort foods" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>{FOOD_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={15} /></label></div><div className="menu-notice" role="status">{menuStatus === "loading" ? "Loading Hopkins menus…" : menuStatus === "cached" ? "Saved Hopkins menu for this date. Availability may have changed." : menuStatus === "unavailable" ? "Hopkins menus are unavailable for this date. Add a custom macro source or try again." : "Foods and options from Hopkins Dining for the selected date."}</div><div className="meal-tabs">{MEALS.map((item) => <button key={item} className={meal === item ? "active" : ""} onClick={() => setMeal(item)}>{item}</button>)}</div><p className="food-sort-note">{sortBy === "logged" ? (foodUsage.size ? "Most logged by you appears first." : "Your most logged foods will appear first after you start logging.") : `${FOOD_SORT_OPTIONS.find((option) => option.value === sortBy)?.label} first.`}</p><div className="food-modal-list">{displayFoods.map((food) => { const loggedCount = foodUsage.get(food.id)?.count ?? 0; return <button key={food.id} className={`modal-food-row ${selectedFood?.id === food.id ? "selected" : ""}`} onClick={() => chooseFood(food)}><FoodTags food={food} compact /><span className="modal-food-copy"><strong>{food.name}</strong><small>{food.locationName} · {food.servingSize}{loggedCount ? ` · Logged ${loggedCount}×` : ""}</small></span><span className="modal-food-kcal">{food.missingNutrition?.length ? "Nutrition unavailable" : `${food.calories} kcal`}</span><span className={`favorite-button ${favoriteIds.includes(food.id) ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(food.id); }}><Heart size={16} fill={favoriteIds.includes(food.id) ? "currentColor" : "none"} /></span></button>; })}{displayFoods.length === 0 && <div className="empty-state small"><Search size={24} /><strong>No foods found</strong><span>Try a different search or location.</span></div>}</div>{selectedFood && addOnOptions.length > 0 && <section className="add-on-panel"><div className="add-on-heading"><div><strong>{selectedFood.addOns?.length ? `Build your ${selectedFood.name}` : `Customize your ${selectedFood.name}`}</strong><span>Options from this Hopkins menu · quantities are per serving</span></div><span className="add-on-estimate">Hopkins menu</span></div>{(["protein", "topping"] as const).map((category) => <div className="add-on-group" key={category}><span className="add-on-group-label">{category === "protein" ? "Choose protein" : "Choose toppings"}</span>{addOnOptions.filter((addOn) => addOn.category === category).map((addOn) => { const quantity = selectedAddOns[addOn.id] ?? 0; return <div className={`add-on-option ${quantity ? "selected" : ""}`} key={addOn.id}><button type="button" className="add-on-toggle" onClick={() => toggleAddOn(addOn)}><span className="add-on-check">{quantity ? "✓" : ""}</span><span className="add-on-copy"><strong>{addOn.name}</strong><small>{addOn.servingSize} · +{addOn.calories} kcal · +{formatNumber(addOn.protein)}g protein</small></span></button>{quantity > 0 && <div className="add-on-stepper"><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity - 0.25)} aria-label={`Decrease ${addOn.name}`}>−</button><span>{formatNumber(quantity)}x</span><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity + 0.25)} aria-label={`Increase ${addOn.name}`}>+</button></div>}</div>; })}</div>)}</section>}{selectedFood && <div className="selected-food-panel"><div><strong>{selectedFood.name}</strong><span>{selectedNutrition ? `${formatNumber(selectedNutrition.calories)} kcal · ${formatNumber(selectedNutrition.protein)}g protein` : ""} for {formatNumber(servings)} serving{servings === 1 ? "" : "s"}{chosenAddOns.length ? ` · ${chosenAddOns.length} add-on${chosenAddOns.length === 1 ? "" : "s"}` : ""}</span></div><div className="serving-control"><span>Servings</span><div className="serving-stepper large"><button type="button" onClick={() => setServings(Math.max(0.25, servings - 0.25))}>−</button><strong>{formatNumber(servings)}</strong><button type="button" onClick={() => setServings(Math.min(20, servings + 0.25))}>+</button></div></div><button type="button" className="primary-button modal-add" disabled={Boolean(selectedFood.missingNutrition?.length)} onClick={() => onAdd(chosenAddOns)}><Plus size={17} /> Add to {meal.toLowerCase()}</button></div>}</div></div>;
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="food-modal" role="dialog" aria-modal="true" aria-labelledby="add-food-title"><div className="modal-header"><div><p className="eyebrow">Build your log</p><h2 id="add-food-title">Add a food</h2></div><button className="close-button" onClick={onClose}><X size={19} /></button></div><div className="modal-controls"><label className="search-field"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the dining catalog" /></label><label className="select-field"><select aria-label="Filter by location" value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">All locations</option>{locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label><TagFilterMenu selected={tagFilters} onChange={setTagFilters} /><label className="select-field"><select aria-label="Sort foods" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>{FOOD_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={15} /></label></div><div className="menu-notice" role="status">{menuStatus === "loading" ? "Loading Hopkins menus…" : menuStatus === "cached" ? "Saved Hopkins menu for this date. Availability may have changed. Charles Market packaged snacks are also listed." : menuStatus === "unavailable" ? "Hopkins menus are unavailable for this date. Charles Market packaged snacks are still listed here, or try again." : "Hopkins foods and options for the selected date; Charles Market packaged snacks are also listed."}</div><div className="meal-tabs">{MEALS.map((item) => <button key={item} className={meal === item ? "active" : ""} onClick={() => setMeal(item)}>{item}</button>)}</div><p className="food-sort-note">{sortBy === "logged" ? (foodUsage.size ? "Most logged by you appears first." : "Your most logged foods will appear first after you start logging.") : `${FOOD_SORT_OPTIONS.find((option) => option.value === sortBy)?.label} first.`}</p><div className="food-modal-list">{displayFoods.map((food) => { const loggedCount = foodUsage.get(food.id)?.count ?? 0; return <button key={food.id} className={`modal-food-row ${selectedFood?.id === food.id ? "selected" : ""}`} onClick={() => chooseFood(food)}><FoodTags food={food} compact /><span className="modal-food-copy"><strong>{food.name}</strong><small>{food.locationName} · {food.servingSize}{loggedCount ? ` · Logged ${loggedCount}×` : ""}</small></span><span className="modal-food-kcal">{food.missingNutrition?.length ? "Nutrition unavailable" : `${food.calories} kcal`}</span><span className={`favorite-button ${favoriteIds.includes(food.id) ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onToggleFavorite(food.id); }}><Heart size={16} fill={favoriteIds.includes(food.id) ? "currentColor" : "none"} /></span></button>; })}{displayFoods.length === 0 && <div className="empty-state small"><Search size={24} /><strong>No foods found</strong><span>Try a different search or location.</span></div>}</div>{selectedFood && addOnOptions.length > 0 && <section className="add-on-panel"><div className="add-on-heading"><div><strong>{selectedFood.addOns?.length ? `Build your ${selectedFood.name}` : `Customize your ${selectedFood.name}`}</strong><span>Options from this Hopkins menu · quantities are per serving</span></div><span className="add-on-estimate">Hopkins menu</span></div>{(["protein", "topping"] as const).map((category) => <div className="add-on-group" key={category}><span className="add-on-group-label">{category === "protein" ? "Choose protein" : "Choose toppings"}</span>{addOnOptions.filter((addOn) => addOn.category === category).map((addOn) => { const quantity = selectedAddOns[addOn.id] ?? 0; const missing = missingAddOnNutrition(addOn, allFoods); return <div className={`add-on-option ${quantity ? "selected" : ""}`} key={addOn.id}><button type="button" className="add-on-toggle" onClick={() => toggleAddOn(addOn)}><span className="add-on-check">{quantity ? "✓" : ""}</span><span className="add-on-copy"><strong>{addOn.name}</strong><small>{addOn.servingSize} · {missing.length ? `nutrition missing: ${missing.join(", ")}` : `+${addOn.calories} kcal · +${formatNumber(addOn.protein)}g protein`}</small></span></button>{quantity > 0 && <div className="add-on-stepper"><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity - 0.25)} aria-label={`Decrease ${addOn.name}`}>−</button><span>{formatNumber(quantity)}x</span><button type="button" onClick={() => changeAddOnQuantity(addOn, quantity + 0.25)} aria-label={`Increase ${addOn.name}`}>+</button></div>}</div>; })}</div>)}</section>}{selectedFood && <div className="selected-food-panel"><div><strong>{selectedFood.name}</strong><span>{selectedNutrition ? `${formatNumber(selectedNutrition.calories)} kcal · ${formatNumber(selectedNutrition.protein)}g protein` : ""} for {formatNumber(servings)} serving{servings === 1 ? "" : "s"}{chosenAddOns.length ? ` · ${chosenAddOns.length} add-on${chosenAddOns.length === 1 ? "" : "s"}` : ""}</span></div><div className="serving-control"><span>Servings</span><div className="serving-stepper large"><button type="button" onClick={() => setServings(Math.max(0.25, servings - 0.25))}>−</button><strong>{formatNumber(servings)}</strong><button type="button" onClick={() => setServings(Math.min(20, servings + 0.25))}>+</button></div></div><button type="button" className="primary-button modal-add" disabled={Boolean(selectedFood.missingNutrition?.length)} onClick={() => onAdd(chosenAddOns)}><Plus size={17} /> Add to {meal.toLowerCase()}</button></div>}</div></div>;
 }
 
 function MacroEntryModal({ onAdd, onClose }: { onAdd: (entry: Omit<MacroEntry, "id" | "createdAt">) => void; onClose: () => void }) {

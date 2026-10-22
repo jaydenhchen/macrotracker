@@ -135,6 +135,65 @@ select.plain-input { appearance: none; padding-right: 31px; background-color: #f
 .water-card { padding: 23px 25px; min-height: 320px; background: linear-gradient(145deg, #fff, #f2f8ff); }.water-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }.water-card-top > strong { color: var(--blue); font: 700 18px 'Space Grotesk', sans-serif; }.water-card-top > strong small { color: #8fa1bb; font: 500 10px 'DM Sans', sans-serif; }.water-progress { height: 10px; margin: 48px 0 10px; border-radius: 99px; background: #e3ebf7; overflow: hidden; }.water-progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6a9ee7, #244f9f); transition: width .2s ease; }.water-helper { color: var(--muted); font-size: 11px; margin: 0; }.water-actions { display: flex; align-items: center; gap: 7px; margin-top: 25px; }.water-actions > button, .water-actions form { height: 34px; border: 1px solid #cbdaf0; border-radius: 8px; background: #fff; color: var(--blue); font-size: 10px; font-weight: 700; }.water-actions > button { padding: 0 10px; }.water-actions form { display: flex; overflow: hidden; flex: 1; min-width: 0; }.water-actions input { min-width: 0; width: 100%; border: 0; outline: 0; padding: 0 8px; color: var(--ink); font-size: 10px; }.water-actions form button { width: 32px; border: 0; border-left: 1px solid #dbe5f2; background: var(--blue-pale); color: var(--blue); display: grid; place-items: center; }.water-log { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 18px; }.water-log div { display: flex; align-items: center; gap: 4px; padding: 5px 7px; border-radius: 7px; background: rgba(255,255,255,.76); color: #8295b0; font-size: 9px; }.water-log button { border: 0; padding: 0; display: grid; background: transparent; color: #a0afc2; }.macro-sources-heading { margin-top: 38px; }.macro-sources { overflow-x: auto; padding: 4px 19px; }.source-grid { min-width: 680px; display: grid; grid-template-columns: minmax(230px, 1fr) 80px 80px 80px 80px 28px; align-items: center; gap: 10px; }.source-grid-head { padding: 10px 0 7px; color: #99a7b8; text-transform: uppercase; letter-spacing: .7px; font-size: 8px; font-weight: 700; }.source-grid-head span:not(:first-child), .source-grid-row > span { text-align: right; }.source-grid-row { padding: 11px 0; border-top: 1px solid #eef1f5; color: #6f8098; font-size: 10px; }.source-grid-row > strong { color: var(--orange); text-align: right; font-size: 11px; }.source-name { min-width: 0; display: grid; gap: 4px; }.source-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 11px; }.source-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9aa7b8; font-size: 9px; }.macro-modal { width: min(520px, 100%); padding: 24px 25px 21px; }.macro-modal .modal-header { padding: 0 0 11px; }.macro-modal-copy { color: var(--muted); font-size: 11px; line-height: 1.5; margin-bottom: 20px; }.macro-entry-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 13px; }.macro-entry-grid .plain-input { padding: 0 8px; }.macro-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 @media (max-width: 720px) { .water-card { min-height: 0; }.water-progress { margin-top: 30px; }.macro-entry-grid { grid-template-columns: repeat(2, 1fr); }.source-grid { grid-template-columns: minmax(190px, 1fr) 65px 70px 65px 65px 24px; min-width: 590px; } }
 
+/* Small-screen ergonomics: account for notches, touch targets, and narrow nutrition tables. */
+@media (max-width: 720px) {
+  .topbar { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .date-switcher { gap: 2px; margin-right: 0; }
+  .date-switcher > button { min-width: 40px; min-height: 40px; }
+  .date-switcher .date-label { max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .page-wrap { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
+  .mobile-nav { height: calc(66px + env(safe-area-inset-bottom)); padding: 5px 8px calc(6px + env(safe-area-inset-bottom)); }
+  .mobile-nav-button { min-height: 48px; font-size: 10px; }
+  .water-actions { flex-wrap: wrap; }
+  .water-actions > button { min-height: 42px; flex: 1 1 70px; }
+  .water-actions form { flex-basis: 100%; height: 42px; }
+  .water-actions form button { width: 44px; }
+  .weight-history-row { gap: 9px; }
+  .modal-backdrop { align-items: end; padding: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .food-modal { width: 100%; max-height: min(92dvh, 900px); min-height: min(72dvh, 650px); border-radius: 20px 20px 0 0; overflow: hidden; }
+  .food-modal .modal-header { padding: 17px 17px 12px; }
+  .food-modal .modal-controls { padding: 0 17px 10px; gap: 8px; }
+  .food-modal .modal-controls .select-field, .food-modal .modal-controls .tag-filter-menu { min-height: 44px; }
+  .food-modal .menu-notice { margin: 0 17px 10px; padding: 9px 11px; font-size: 10px; line-height: 1.4; }
+  .meal-tabs { padding: 0 17px; gap: 18px; overflow-x: auto; }
+  .meal-tabs button { min-height: 42px; flex: 0 0 auto; }
+  .food-sort-note { margin-left: 17px; margin-right: 17px; }
+  .food-modal-list { min-height: 90px; padding: 6px 10px; overscroll-behavior: contain; }
+  .modal-food-row { min-height: 56px; gap: 8px; padding: 8px; }
+  .modal-food-copy strong { white-space: normal; }
+  .modal-food-kcal { max-width: 74px; text-align: right; font-size: 10px; }
+  .favorite-button { min-width: 38px; min-height: 38px; }
+  .add-on-panel { max-height: 28dvh; margin: 0 12px 10px; padding: 11px; overscroll-behavior: contain; }
+  .add-on-option { min-height: 46px; }
+  .add-on-toggle { min-height: 44px; }
+  .add-on-stepper button { width: 32px; height: 32px; }
+  .selected-food-panel { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); gap: 10px; }
+  .selected-food-panel > div:first-child { width: 100%; }
+  .serving-stepper button { min-width: 36px; min-height: 36px; }
+  .modal-add { min-height: 46px; }
+  .macro-sources { overflow: visible; padding: 4px 14px; }
+  .source-grid-head { display: none; }
+  .source-grid-row { min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; padding: 13px 0; }
+  .source-grid-row .source-name { grid-column: 1 / -1; }
+  .source-grid-row > span, .source-grid-row > strong { display: grid; justify-items: center; gap: 3px; text-align: center; font-size: 10px; }
+  .source-grid-row > span:nth-child(2)::before { content: "Calories"; }
+  .source-grid-row > strong:nth-child(3)::before { content: "Protein"; }
+  .source-grid-row > span:nth-child(4)::before { content: "Carbs"; }
+  .source-grid-row > span:nth-child(5)::before { content: "Fat"; }
+  .source-grid-row > span:nth-child(2)::before, .source-grid-row > strong:nth-child(3)::before, .source-grid-row > span:nth-child(4)::before, .source-grid-row > span:nth-child(5)::before { color: #99a7b8; font-size: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+  .source-grid-row > button:last-child, .source-grid-row > span:last-child { grid-column: 1 / -1; justify-self: end; }
+}
+
+@media (max-width: 380px) {
+  .mobile-brand { gap: 7px; }
+  .mobile-brand strong { font-size: 14px; }
+  .date-switcher .date-label { max-width: 95px; font-size: 10px; }
+  .page-wrap { padding-top: 24px; }
+  .food-modal .modal-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .food-modal .modal-controls .tag-filter-menu { grid-column: 1 / -1; }
+  .food-modal .modal-controls > .select-field:last-child { grid-column: auto; }
+}
+
 /* The native select owns the entire painted box, including its decorative icons. */
 .select-field { padding: 0; cursor: pointer; }
 .select-field select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0 34px 0 13px; border-radius: inherit; z-index: 2; }

@@ -28,16 +28,22 @@ async function main() {
     await page.locator('.side-nav').getByRole('button', { name: 'Foods' }).click();
     await page.waitForFunction(() => !document.querySelector('.api-badge')?.textContent.includes('Loading'));
     if (menu) {
-      assert.equal(await page.locator('.catalog-food-card').count(), menu.foods.length);
+      assert.equal(await page.locator('.catalog-food-card').count(), menu.foods.length + 5);
       await page.getByText('Saved Hopkins menu', { exact: true }).waitFor();
       for (const location of menu.locations) {
         await page.getByLabel('Filter by location').selectOption(location.id);
         assert.equal(await page.locator('.catalog-food-card').count(), menu.foods.filter((food) => food.locationId === location.id).length);
       }
     } else {
-      await page.getByText('Menus are temporarily unavailable', { exact: true }).waitFor();
-      assert.equal(await page.locator('.catalog-food-card').count(), 0);
+      await page.locator('.api-badge').filter({ hasText: 'Menu unavailable' }).waitFor();
+      assert.equal(await page.locator('.catalog-food-card').count(), 5);
     }
+    await page.getByLabel('Filter by location').selectOption('charles-market');
+    assert.equal(await page.locator('.catalog-food-card').count(), 5);
+    const heatCard = page.locator('.catalog-food-card').filter({ hasText: 'PLANTERS HEAT Peanuts' });
+    assert.equal(await heatCard.getByRole('link').getAttribute('href'), 'https://www.planters.com/product/heat-peanuts/');
+    assert.equal(await page.locator('.menu-location').filter({ hasText: 'Charles Market' }).locator('a').getAttribute('href'), 'https://www.yorkstreetmarket.com/grab-n-go');
+    assert.equal(await page.locator('.menu-location').filter({ hasText: 'Charles Market' }).locator('a').innerText(), 'York Street Market Grab-&-Go ↗');
     await page.getByLabel('Filter by location').selectOption('all');
     await page.getByLabel('Sort foods').selectOption('protein-desc');
     await page.getByRole('button', { name: 'All dietary tags', exact: true }).click();
@@ -65,8 +71,12 @@ async function main() {
         await page.keyboard.press('Escape');
       }
     }
+    await page.getByLabel('Filter by location').selectOption('charles-market');
+    await page.locator('.modal-food-row').filter({ hasText: 'PLANTERS Salted Peanuts' }).click();
+    await page.getByRole('button', { name: 'Add to lunch', exact: true }).click();
+    await page.locator('.entry-row').filter({ hasText: 'PLANTERS Salted Peanuts' }).waitFor();
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: actual-menu fallback, every location filter, combined tags, sorting, desktop/mobile dropdown arrow clicks.');
+    console.log('Browser checks passed: Hopkins menu fallback, every location filter incl. Charles Market, grab-and-go/product links, peanut logging, combined tags, sorting, desktop/mobile dropdown arrow clicks.');
   } finally {
     await browser?.close();
     server.kill();

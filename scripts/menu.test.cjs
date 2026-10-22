@@ -44,10 +44,23 @@ test('the same named food at one location appears once and keeps every meal peri
   assert.equal(result.foods.length, 1);
   assert.deepEqual(result.foods[0].mealPeriods, ['Lunch', 'Dinner']);
   assert.deepEqual(result.foods[0].menuTypes, ['hopkins-cafe-lunch', 'hopkins-cafe-dinner']);
+  assert.deepEqual(result.foods[0].legacyIds, [
+    'nutrislice-hopkins-cafe-25-hopkins-cafe-lunch',
+    'nutrislice-hopkins-cafe-25-hopkins-cafe-dinner',
+  ]);
   assert.equal(result.locations[0].meals.find((meal) => meal.name === 'Lunch').foods.length, 1);
   assert.equal(result.locations[0].meals.find((meal) => meal.name === 'Dinner').foods.length, 1);
 });
 
+test('deduplicating repeated foods retains station context from a later menu result', async () => {
+  const oneLocation = [{ slug: 'site-1', name: 'Levering Kitchens', active_menu_types: [
+    { slug: 'lunch-a', name: 'Lunch A' }, { slug: 'lunch-b', name: 'Lunch B' },
+  ] }];
+  global.fetch = async (url) => url.includes('/schools/') ? json(oneLocation) : json({ days: [{ date: '2026-10-21', menu_items: url.includes('/lunch-a/') ? [{ food }] : [{ is_station_header: true, text: 'Build Your Own' }, { food }] }] });
+  const result = await fetchMenu('2026-10-21');
+  assert.equal(result.foods.length, 1);
+  assert.equal(result.foods[0].stationName, 'Build Your Own');
+});
 test('empty or malformed directory produces a useful error and no fictional foods', async () => {
   global.fetch = async () => json([]);
   const result = await fetchMenu('2026-10-21');
@@ -205,6 +218,58 @@ test('fractional add-ons use the same unrounded basis for logging, display and r
     assert.deepEqual(entry.nutrition, nutritionForMeal(food, servings, addOns));
   }
   assert.deepEqual(entry.nutrition, original);
+});
+
+test('Levering customization is limited to builder items or stations', () => {
+  const { addOnsForFood, missingAddOnNutrition } = require('../lib/customization.ts');
+  const base = { id: 'base', name: 'Chef special', locationId: 'site-1', locationName: 'Levering Kitchens', stationName: 'Build Your Own', mealPeriods: ['Lunch'], addOns: [] };
+  const chicken = { ...base, id: 'chicken', name: 'Grilled chicken', stationName: 'Build your own', servingSize: '3 oz', calories: 120, protein: 24, carbs: 0, fat: 2, missingNutrition: [] };
+  const tofu = { ...base, id: 'tofu', name: 'Tofu', stationName: 'Build Your Own', servingSize: '3 oz', calories: 0, protein: 0, carbs: 0, fat: 0, missingNutrition: ['calories', 'protein', 'carbs', 'fat'] };
+  const unrelated = { ...chicken, id: 'other', locationId: 'hopkins-cafe', name: 'Chicken' };
+  const options = addOnsForFood(base, [base, chicken, tofu, unrelated]);
+  assert.deepEqual(options.map((option) => option.name), ['Grilled chicken', 'Tofu']);
+  assert.equal(options[0].category, 'protein');
+  assert.equal(options[1].category, 'protein');
+  assert.deepEqual(missingAddOnNutrition(options[1], [base, chicken, tofu]), ['calories', 'protein', 'carbs', 'fat']);
+
+  const entree = { ...base, id: 'entree', stationName: 'Hot Entrées' };
+  const entreeProtein = { ...chicken, id: 'entree-protein', stationName: 'Hot Entrées' };
+  assert.deepEqual(addOnsForFood(entree, [entree, entreeProtein]), []);
+});
+
+test('duplicate menu rows retain station and add-on metadata', async () => {
+  const { fetchTodayMenu } = require('../lib/nutrislice.ts');
+  global.window = { location: { origin: 'https://jaydenhchen.github.io' } };
+  global.localStorage = { getItem: () => null, setItem() {} };
+  global.fetch = async () => json({
+    ok: true,
+    schemaVersion: 6,
+    source: 'hopkins-nutrislice',
+    date: '2026-10-21',
+    fetchedAt: new Date().toISOString(),
+    partial: false,
+    foods: [
+      { id: 'first', legacyIds: ['legacy-lunch'], name: 'Chef bowl', locationId: 'site-1', locationName: 'Levering Kitchens', mealPeriods: ['Lunch'], menuType: 'lunch-a', servingSize: '1 bowl', calories: 400, protein: 20, carbs: 50, fat: 10, allergens: [], tags: [], updatedAt: '2026-10-21' },
+      { id: 'second', legacyIds: ['legacy-dinner'], name: 'Chef bowl', locationId: 'site-1', locationName: 'Levering Kitchens', mealPeriods: ['Dinner'], menuType: 'lunch-b', stationName: 'Build Your Own', addOns: [{ id: 'avocado', name: 'Avocado', category: 'topping', servingSize: '1 scoop', calories: 80, protein: 1, carbs: 4, fat: 7 }], calories: 400, protein: 20, carbs: 50, fat: 10, allergens: [], tags: [], updatedAt: '2026-10-21' },
+    ],
+    locations: [{ id: 'site-1', name: 'Levering Kitchens', menuUrl: 'https://hopkinsdining.nutrislice.com/menu/site-1', status: 'available' }],
+  });
+  const menu = await fetchTodayMenu('2026-10-21');
+  assert.equal(menu.foods.length, 1);
+  assert.equal(menu.foods[0].stationName, 'Build Your Own');
+  assert.deepEqual(menu.foods[0].addOns?.map((addOn) => addOn.name), ['Avocado']);
+  assert.deepEqual(menu.foods[0].legacyIds, ['legacy-lunch', 'legacy-dinner']);
+});
+
+test('Planters added-sugar values drive the no-added-sugar filter', () => {
+  const { FOODS } = require('../lib/catalog.ts');
+  const { matchesFoodTags } = require('../lib/food-filters.ts');
+  const peanuts = FOODS.filter((food) => food.locationId === 'charles-market');
+  assert.deepEqual(peanuts.map((food) => food.addedSugar), [0, 1, 4, 0, 3]);
+  assert.deepEqual(peanuts.filter((food) => matchesFoodTags(food, ['no-added-sugar'])).map((food) => food.name), [
+    'PLANTERS Salted Peanuts',
+    'PLANTERS HEAT Peanuts',
+  ]);
 });
 
 function cacheFixture() {

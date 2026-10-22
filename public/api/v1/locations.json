@@ -3,8 +3,9 @@
     { "id": "hopkins-cafe", "name": "Hopkins Café", "shortName": "Café", "address": "Charles Street at 33rd", "hours": "7:00 AM – 9:00 PM", "accent": "blue" },
     { "id": "ffc", "name": "Fresh Food Café", "shortName": "FFC", "address": "Homewood Campus", "hours": "7:00 AM – 8:00 PM", "accent": "mint" },
     { "id": "nolans", "name": "Nolan’s on 33rd", "shortName": "Nolan’s", "address": "33rd Street", "hours": "11:00 AM – 10:00 PM", "accent": "orange" },
-    { "id": "levering", "name": "Levering Kitchens", "shortName": "Levering", "address": "Levering Hall", "hours": "11:00 AM – 8:00 PM", "accent": "purple" }
+    { "id": "levering", "name": "Levering Kitchens", "shortName": "Levering", "address": "Levering Hall", "hours": "11:00 AM – 8:00 PM", "accent": "purple" },
+    { "id": "charles-market", "name": "Charles Market", "shortName": "Charles Market", "address": "3339 N Charles St", "hours": "9:00 AM – Midnight", "accent": "orange" }
   ],
   "source": "fallback-catalog",
-  "updatedAt": "2026-10-20T12:00:00.000Z"
+  "updatedAt": "2026-10-21T12:00:00.000Z"
 }
