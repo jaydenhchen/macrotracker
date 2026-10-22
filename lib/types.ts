@@ -9,6 +9,7 @@ export type Nutrition = {
 
 export type Food = Nutrition & {
   id: string;
+  legacyIds?: string[];
   name: string;
   description: string;
   locationId: string;

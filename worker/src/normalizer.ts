@@ -14,6 +14,7 @@ export type MenuTarget = {
 
 export type NormalizedFood = {
   id: string;
+  legacyIds: string[];
   name: string;
   description: string;
   locationId: string;
@@ -306,6 +307,8 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     ...(addedSugar === 0 ? ["No Added Sugar"] : []),
   ].filter(Boolean)));
   const rawId = rawFood.id ?? rawFood.synced_id ?? item.id ?? `${location.id}-${slug(name)}`;
+  const legacyRawId = rawFood.id ?? rawFood.synced_id ?? item.id ?? `${location.id}-${mealType}-${slug(name)}`;
+  const legacyId = `nutrislice-${location.id}-${String(legacyRawId)}-${mealType}`;
   const addOns = normalizeFoodAddOns(item, rawFood, String(rawId));
   const servingAmount = servingInfo.serving_size_amount ?? rawFood.serving_size_amount ?? item.serving_size_amount ?? "1";
   const servingUnit = servingInfo.serving_size_unit ?? rawFood.serving_size_unit ?? item.serving_size_unit ?? "serving";
@@ -316,6 +319,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     // Nutrislice repeats the same food object across meal types and stations.
     // Use location + normalized display name as the catalog identity.
     id: `nutrislice-${location.id}-${slug(normalizedText(name)) || String(rawId)}`,
+    legacyIds: [legacyId],
     name,
     description: stringValue(rawFood.description ?? rawFood.subtext) || `${mealName} menu item at ${location.name}.`,
     locationId: location.id,
@@ -357,6 +361,7 @@ export function makeMenuResponse(date: string, results: MenuResult[], errors: Me
     unique.set(key, {
       ...(preferNewNutrition ? food : existing),
       id: existing.id,
+      legacyIds: Array.from(new Set([...existing.legacyIds, ...food.legacyIds])),
       // Preserve station context if an earlier duplicate came from a menu response
       // without section headings; build-your-own choices depend on this grouping.
       stationName: existing.stationName || food.stationName,

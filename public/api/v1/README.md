@@ -8,4 +8,4 @@ This is a static, read-only API designed for GitHub Pages. It contains no person
 - `menus.json` — menu response metadata
 - `categories.json` — meal and dietary filter categories
 
-The app is intentionally local-first: goals, meal logs, favorites, and weights remain in the user’s browser. The static JSON files are fallback catalog data; the app separately attempts to read the selected day’s live menu from Hopkins Dining’s Nutrislice feed in the browser and labels fallback data when live access fails.
+The app is intentionally local-first: goals, meal logs, favorites, and weights remain in the user’s browser. The static JSON files are fallback catalog data; the app separately attempts to read the selected day’s live menu from Hopkins Dining’s Nutrislice feed in the browser and labels fallback data when live access fails. The foods catalog includes five 49 g PLANTERS peanut packs under Charles Market, with links to the York Street Market Grab-&-Go page and manufacturer product pages.

@@ -20,9 +20,8 @@ export function addOnsForFood(food: Food, foods: Food[]): FoodAddOn[] {
     option.stationName && normalized(option.stationName) === station &&
     option.mealPeriods.some((meal) => food.mealPeriods.includes(meal))
   );
-  // Levering's build-your-own stations commonly list the base under a generic dish name.
-  // Offer the station components there even when the base name doesn't say "bowl" etc.
-  if (!stationFoods.length || (!isLevering && !BUILDER_PATTERN.test(food.name))) return [];
+  // Generic Levering dishes are configurable only when their station is a builder station.
+  if (!stationFoods.length || (!BUILDER_PATTERN.test(food.name) && !BUILDER_PATTERN.test(food.stationName))) return [];
 
   return stationFoods.map((option) => ({
     id: option.id,

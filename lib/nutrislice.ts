@@ -49,8 +49,10 @@ function normalizeFood(value: unknown): Food | null {
   if (!item || typeof item.id !== "string" || typeof item.name !== "string" || typeof item.locationId !== "string" || typeof item.locationName !== "string") return null;
   const addOns = Array.isArray(item.addOns) ? item.addOns.map(normalizeAddOn).filter((addOn): addOn is NonNullable<typeof addOn> => Boolean(addOn)) : [];
   const missingNutrition = Array.from(new Set([...stringArray(item.missingNutrition), ...["calories", "protein", "carbs", "fat"].filter((key) => !validNutritionValue(item[key]))]));
+  const legacyIds = Array.from(new Set(stringArray(item.legacyIds).filter((id) => id && id !== item.id)));
   return {
     id: item.id,
+    ...(legacyIds.length ? { legacyIds } : {}),
     name: item.name,
     description: typeof item.description === "string" ? item.description : "",
     locationId: item.locationId,
@@ -183,6 +185,9 @@ function deduplicateFoods(foods: Food[]): Food[] {
       allergens: Array.from(new Set([...existing.allergens, ...food.allergens])),
       tags: Array.from(new Set([...existing.tags, ...food.tags].filter((tag) => !(food.addedSugar != null || existing.addedSugar != null) || !/no added sugar/i.test(tag)).concat(Math.max(existing.addedSugar ?? 0, food.addedSugar ?? 0) === 0 && (existing.addedSugar === 0 || food.addedSugar === 0) ? ["No Added Sugar"] : []))),
       addedSugar: existing.addedSugar == null ? food.addedSugar ?? null : food.addedSugar == null ? existing.addedSugar : Math.max(existing.addedSugar, food.addedSugar),
+      legacyIds: Array.from(new Set([...(existing.legacyIds ?? []), ...(food.legacyIds ?? [])])),
+      stationName: existing.stationName || food.stationName,
+      addOns: Array.from(new Map([...(existing.addOns ?? []), ...(food.addOns ?? [])].map((addOn) => [addOn.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(), addOn])).values()),
     });
   }
   return Array.from(unique.values());
