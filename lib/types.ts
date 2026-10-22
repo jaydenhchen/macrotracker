@@ -25,6 +25,10 @@ export type Food = Nutrition & {
   addOns?: FoodAddOn[];
   updatedAt: string;
   missingNutrition?: string[];
+  catalogPage?: number;
+  catalogItemCode?: string;
+  upc?: string;
+  nutritionSourceUrl?: string;
   stationName?: string;
 };
 
@@ -53,6 +57,7 @@ export type MealEntry = {
   nutrition: Nutrition;
   locationName: string;
   nutritionPerServing?: Nutrition;
+  missingNutrition?: string[];
   addOns?: MealAddOn[];
 };
 

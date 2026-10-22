@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const staticCatalog = JSON.parse(fs.readFileSync(path.join(__dirname, '../public/api/v1/foods.json'), 'utf8'));
+const charlesMarketFoodCount = staticCatalog.data.filter((food) => food.locationId === 'charles-market').length;
 
 async function main() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '/macrotracker';
@@ -27,8 +29,14 @@ async function main() {
     await page.getByRole('button', { name: 'Close setup' }).click();
     await page.locator('.side-nav').getByRole('button', { name: 'Foods' }).click();
     await page.waitForFunction(() => !document.querySelector('.api-badge')?.textContent.includes('Loading'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileSearchBox = await page.locator('.food-toolbar .search-field').boundingBox();
+    assert.ok(mobileSearchBox && mobileSearchBox.height >= 42 && mobileSearchBox.height <= 44, `Foods search control should stay compact on mobile: ${JSON.stringify(mobileSearchBox)}`);
+    const mobileDocumentWidth = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+    assert.equal(mobileDocumentWidth.scroll, mobileDocumentWidth.client, `Foods view must not overflow horizontally on mobile: ${JSON.stringify(mobileDocumentWidth)}`);
+    await page.setViewportSize({ width: 1440, height: 1000 });
     if (menu) {
-      assert.equal(await page.locator('.catalog-food-card').count(), menu.foods.length + 5);
+      assert.equal(await page.locator('.catalog-food-card').count(), menu.foods.length + charlesMarketFoodCount);
       await page.getByText('Saved Hopkins menu', { exact: true }).waitFor();
       for (const location of menu.locations) {
         await page.getByLabel('Filter by location').selectOption(location.id);
@@ -36,10 +44,10 @@ async function main() {
       }
     } else {
       await page.locator('.api-badge').filter({ hasText: 'Menu unavailable' }).waitFor();
-      assert.equal(await page.locator('.catalog-food-card').count(), 5);
+      assert.equal(await page.locator('.catalog-food-card').count(), charlesMarketFoodCount);
     }
     await page.getByLabel('Filter by location').selectOption('charles-market');
-    assert.equal(await page.locator('.catalog-food-card').count(), 5);
+    assert.equal(await page.locator('.catalog-food-card').count(), charlesMarketFoodCount);
     const heatCard = page.locator('.catalog-food-card').filter({ hasText: 'PLANTERS HEAT Peanuts' });
     assert.equal(await heatCard.getByRole('link').getAttribute('href'), 'https://www.planters.com/product/heat-peanuts/');
     assert.equal(await page.locator('.menu-location').filter({ hasText: 'Charles Market' }).locator('a').getAttribute('href'), 'https://www.yorkstreetmarket.com/grab-n-go');
@@ -75,8 +83,20 @@ async function main() {
     await page.locator('.modal-food-row').filter({ hasText: 'PLANTERS Salted Peanuts' }).click();
     await page.getByRole('button', { name: 'Add to lunch', exact: true }).click();
     await page.locator('.entry-row').filter({ hasText: 'PLANTERS Salted Peanuts' }).waitFor();
+    await page.getByRole('button', { name: 'Add to Lunch', exact: true }).click();
+    await page.getByLabel('Filter by location').selectOption('charles-market');
+    const unknownFood = page.locator('.modal-food-row').filter({ hasText: 'Asiago Turkey' });
+    await unknownFood.click();
+    assert.equal(await page.getByRole('button', { name: 'Add to lunch', exact: true }).isEnabled(), true);
+    await page.getByText('Nutrition unavailable; unknown values are not included in totals.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Add to lunch', exact: true }).click();
+    const unknownEntry = page.locator('.entry-row').filter({ hasText: 'Asiago Turkey' });
+    await unknownEntry.waitFor();
+    assert.equal(await unknownEntry.locator('.entry-macros strong').innerText(), '—');
+    assert.equal(await unknownEntry.locator('.entry-macros span').innerText(), 'unavailable');
+    await page.locator('.nutrition-warning').waitFor();
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: Hopkins menu fallback, every location filter incl. Charles Market, grab-and-go/product links, peanut logging, combined tags, sorting, desktop/mobile dropdown arrow clicks.');
+    console.log('Browser checks passed: Hopkins fallback, all 230 Charles Market foods, York Street and peanut links, known and unavailable-macro logging, dietary filters, sorting, desktop/mobile dropdown arrow clicks.');
   } finally {
     await browser?.close();
     server.kill();
