@@ -1,4 +1,5 @@
 import { Food, Location } from "./types";
+import { YORK_STREET_MARKET_FOODS } from "./charles-market-foods";
 export const CHARLES_MARKET_MENU_URL = "https://www.yorkstreetmarket.com/grab-n-go";
 
 export const LOCATIONS: Location[] = [
@@ -327,6 +328,7 @@ export const FOODS: Food[] = [
     tags: ["High protein"],
     updatedAt: "2026-10-21",
   },
+  ...YORK_STREET_MARKET_FOODS,
 ];
 export const CHARLES_MARKET_FOODS = FOODS.filter((food) => food.locationId === "charles-market");
 

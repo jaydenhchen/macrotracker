@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "worker:typecheck": "tsc --noEmit -p worker/tsconfig.json",
     "test": "node --test scripts/menu.test.cjs",
-    "menus:refresh": "node scripts/build-menus.cjs"
+    "menus:refresh": "node scripts/build-menus.cjs",
+    "catalog:refresh": "node scripts/build-catalog.cjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

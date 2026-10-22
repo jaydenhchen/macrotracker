@@ -61,6 +61,7 @@ function normalizeMealEntry(value: unknown): MealEntry | null {
     ...(perServing && ["calories", "protein", "carbs", "fat"].every((key) => typeof perServing[key] === "number" && Number.isFinite(perServing[key]) && Number(perServing[key]) >= 0) ? {
       nutritionPerServing: { calories: Number(perServing.calories), protein: Number(perServing.protein), carbs: Number(perServing.carbs), fat: Number(perServing.fat) },
     } : {}),
+    ...(Array.isArray(value.missingNutrition) ? { missingNutrition: value.missingNutrition.filter((key): key is string => ["calories", "protein", "carbs", "fat"].includes(String(key))) } : {}),
     ...(addOns?.length ? { addOns } : {}),
   };
 }
