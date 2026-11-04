@@ -127,7 +127,7 @@
       "calories": 280,
       "protein": 19,
       "carbs": 36,
-      "fat": 7,
+      "fat": 0,
       "allergens": [
         "Milk",
         "Wheat"
@@ -136,7 +136,7 @@
         "Vegetarian",
         "High protein"
       ],
-      "updatedAt": "2026-10-20"
+      "updatedAt": "2026-11-04"
     },
     {
       "id": "nolans-burrito-bowl",
@@ -5136,19 +5136,13 @@
         "Dinner"
       ],
       "servingSize": "1 item",
-      "calories": 0,
-      "protein": 0,
-      "carbs": 0,
-      "fat": 0,
+      "calories": 750,
+      "protein": 30,
+      "carbs": 66,
+      "fat": 40,
       "allergens": [],
       "tags": [],
-      "updatedAt": "2026-10-21",
-      "missingNutrition": [
-        "calories",
-        "protein",
-        "carbs",
-        "fat"
-      ]
+      "updatedAt": "2026-11-04"
     },
     {
       "id": "charles-market-ysm-p18-cheesesteak-hero",
@@ -6648,5 +6642,5 @@
     "version": "1.0.0"
   },
   "source": "fallback-catalog",
-  "updatedAt": "2026-10-21T12:00:00.000Z"
+  "updatedAt": "2026-11-04T12:00:00.000Z"
 }

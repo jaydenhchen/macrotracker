@@ -137,10 +137,10 @@ export const FOODS: Food[] = [
     calories: 280,
     protein: 19,
     carbs: 36,
-    fat: 7,
+    fat: 0,
     allergens: ["Milk", "Wheat"],
     tags: ["Vegetarian", "High protein"],
-    updatedAt: "2026-10-20",
+    updatedAt: "2026-11-04",
   },
   {
     id: "nolans-burrito-bowl",

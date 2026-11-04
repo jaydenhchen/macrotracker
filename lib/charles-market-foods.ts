@@ -4734,19 +4734,13 @@ export const YORK_STREET_MARKET_FOODS: Food[] = [
       "Dinner"
     ],
     "servingSize": "1 item",
-    "calories": 0,
-    "protein": 0,
-    "carbs": 0,
-    "fat": 0,
+    "calories": 750,
+    "protein": 30,
+    "carbs": 66,
+    "fat": 40,
     "allergens": [],
     "tags": [],
-    "updatedAt": "2026-10-21",
-    "missingNutrition": [
-      "calories",
-      "protein",
-      "carbs",
-      "fat"
-    ]
+    "updatedAt": "2026-11-04",
   },
   {
     "id": "charles-market-ysm-p18-cheesesteak-hero",
