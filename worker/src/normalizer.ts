@@ -288,6 +288,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
   if (!rawFood) return null;
   const name = stringValue(rawFood.name);
   if (!name) return null;
+  const isPlainGreekYogurt = normalizedText(name) === "plain greek yogurt";
 
   const nutrition = record(rawFood.rounded_nutrition_info) ?? record(rawFood.nutrition_info) ?? record(item.rounded_nutrition_info) ?? {};
   const nutritionSources = [
@@ -313,7 +314,9 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
   const servingAmount = servingInfo.serving_size_amount ?? rawFood.serving_size_amount ?? item.serving_size_amount ?? "1";
   const servingUnit = servingInfo.serving_size_unit ?? rawFood.serving_size_unit ?? item.serving_size_unit ?? "serving";
   const mealName = titleCase(mealType);
-  const missingNutrition = Object.entries({ calories: nutrition.calories ?? rawFood.calories, protein: nutrition.g_protein ?? rawFood.protein, carbs: nutrition.g_carbs ?? rawFood.carbs, fat: nutrition.g_fat ?? rawFood.fat }).filter(([, value]) => !validNutritionValue(value)).map(([key]) => key);
+  const missingNutrition = Object.entries({ calories: nutrition.calories ?? rawFood.calories, protein: nutrition.g_protein ?? rawFood.protein, carbs: nutrition.g_carbs ?? rawFood.carbs, fat: nutrition.g_fat ?? rawFood.fat })
+    .filter(([key, value]) => !(isPlainGreekYogurt && key === "fat") && !validNutritionValue(value))
+    .map(([key]) => key);
 
   return {
     // Nutrislice repeats the same food object across meal types and stations.
@@ -335,7 +338,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
     calories: numberValue(nutrition.calories ?? rawFood.calories ?? item.calories),
     protein: numberValue(nutrition.g_protein ?? rawFood.protein ?? item.protein),
     carbs: numberValue(nutrition.g_carbs ?? rawFood.carbs ?? item.carbs),
-    fat: numberValue(nutrition.g_fat ?? rawFood.fat ?? item.fat),
+    fat: isPlainGreekYogurt ? 0 : numberValue(nutrition.g_fat ?? rawFood.fat ?? item.fat),
     addedSugar,
     missingNutrition,
     stationName: stringValue(item.stationName) || undefined,

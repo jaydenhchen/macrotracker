@@ -78,6 +78,25 @@ test('missing macros are explicitly flagged and station headings never become fo
   assert.equal(extractMenuItems(weekly, '2026-10-22').length, 0);
 });
 
+test('plain Greek yogurt is zero fat without changing Greek Yogurt Parfait', () => {
+  const normalize = (name, roundedNutrition) => normalizeMenuItem(
+    { food: { id: name, name, rounded_nutrition_info: roundedNutrition } },
+    HOPKINS_LOCATIONS[0],
+    'breakfast',
+    '2026-10-21',
+  );
+  const plainWithReportedFat = normalize('Plain Greek Yogurt', { calories: 120, g_protein: 15, g_carbs: 8, g_fat: 4 });
+  const plainWithoutReportedFat = normalize('plain-greek-yogurt', { calories: 120, g_protein: 15, g_carbs: 8 });
+  const parfait = normalize('Greek Yogurt Parfait', { calories: 280, g_protein: 19, g_carbs: 36, g_fat: 7 });
+
+  assert.equal(plainWithReportedFat.fat, 0);
+  assert.equal(plainWithoutReportedFat.fat, 0);
+  assert.ok(!plainWithoutReportedFat.missingNutrition.includes('fat'));
+  assert.equal(parfait.fat, 7);
+  const catalogParfait = require('../lib/catalog.ts').FOODS.find((food) => food.id === 'ffc-greek-yogurt');
+  assert.equal(catalogParfait.fat, 7);
+});
+
 test('no added sugar is tagged only when added sugar is explicitly zero; natural sugar is allowed', () => {
   const noAdded = normalizeMenuItem({ food: { id: 11, name: 'Fruit cup', rounded_nutrition_info: { g_sugar: 12, g_added_sugar: 0 } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
   const hasAdded = normalizeMenuItem({ food: { id: 12, name: 'Sweetened oats', rounded_nutrition_info: { g_sugar: 12, g_added_sugar: 4 } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');
@@ -284,10 +303,15 @@ test('Charles Market contains every listed York Street food with explicit macro 
   const macroKeys = ['calories', 'protein', 'carbs', 'fat'];
   const verified = ysmFoods.filter((food) => !food.missingNutrition?.length);
   const unavailable = ysmFoods.filter((food) => food.missingNutrition?.length);
-  assert.equal(verified.length, 44);
-  assert.equal(unavailable.length, 181);
-  assert.ok(verified.every((food) => food.nutritionSourceUrl && macroKeys.every((key) => typeof food[key] === 'number')));
+  assert.equal(verified.length, 45);
+  assert.equal(unavailable.length, 180);
+  const externallySourced = verified.filter((food) => food.nutritionSourceUrl);
+  assert.equal(externallySourced.length, 44);
+  assert.ok(externallySourced.every((food) => macroKeys.every((key) => typeof food[key] === 'number')));
   assert.ok(unavailable.every((food) => macroKeys.every((key) => food.missingNutrition.includes(key)) && !food.nutritionSourceUrl));
+  const meatballHero = ysmFoods.find((food) => food.id === 'charles-market-ysm-p18-meatball-parm-hero');
+  assert.deepEqual([meatballHero.calories, meatballHero.protein, meatballHero.carbs, meatballHero.fat], [750, 30, 66, 40]);
+  assert.ok(!meatballHero.missingNutrition?.length);
 
   const turkeyWedge = ysmFoods.find((food) => food.name === 'Turkey & Cheddar Wedge');
   assert.equal(turkeyWedge.upc, '672975611484');

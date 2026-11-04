@@ -8,6 +8,8 @@ GET /api/menu?date=YYYY-MM-DD
 
 It reads Hopkins Dining's Nutrislice school directory and fetches each published location and active menu using the exact upstream school/menu slugs and Sunday week boundary. It selects only the requested date and returns normalized `locations`, `meals`, and flat `foods`, including official menu links. `missingNutrition` explicitly flags missing values; the app displays a dash and disables logging incomplete foods instead of treating unknown macros as zero.
 
+The exact `Plain Greek Yogurt` menu item is reported with 0 g fat; this correction does not change `Greek Yogurt Parfait`.
+
 ## Deploy once
 
 From the repository root:
