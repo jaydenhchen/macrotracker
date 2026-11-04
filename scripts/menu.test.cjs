@@ -335,6 +335,58 @@ function cacheFixture() {
     foods: [hc, levering], locations: HOPKINS_LOCATIONS.map((location) => ({ ...location, status: [hc.locationId, levering.locationId].includes(location.id) ? 'available' : 'empty' })), errors: [] };
 }
 
+test('the app corrects plain Greek yogurt in live and cached menu responses', async () => {
+  const { fetchTodayMenu } = require('../lib/nutrislice.ts');
+  const date = '2026-10-21';
+  const location = HOPKINS_LOCATIONS[0];
+  const food = (name, fat) => ({
+    id: `nutrislice-${name.toLowerCase().replace(/[^a-z]+/g, '-')}`,
+    name,
+    description: '',
+    locationId: location.id,
+    locationName: location.name,
+    menuUrl: location.menuUrl,
+    mealPeriods: ['Breakfast'],
+    menuType: 'breakfast',
+    menuTypes: ['breakfast'],
+    servingSize: '1 serving',
+    allergens: [],
+    tags: [],
+    calories: 100,
+    protein: 10,
+    carbs: 8,
+    fat,
+    missingNutrition: [],
+    updatedAt: date,
+  });
+  const payload = {
+    ok: true,
+    schemaVersion: 6,
+    source: 'hopkins-nutrislice',
+    date,
+    fetchedAt: new Date().toISOString(),
+    partial: false,
+    foods: [food('Plain Greek Yogurt', 4), food('Greek Yogurt Parfait', 7)],
+    locations: HOPKINS_LOCATIONS.map((entry) => ({ ...entry, status: 'available' })),
+    errors: [],
+  };
+  let saved = JSON.stringify(payload);
+  global.window = { location: { origin: 'https://jaydenhchen.github.io' } };
+  global.localStorage = { getItem: () => saved, setItem: (_key, value) => { saved = value; } };
+  global.fetch = async (url) => url.startsWith('https:') ? json(payload) : json({}, 404);
+
+  const live = await fetchTodayMenu(date);
+  assert.equal(live.foods.find((item) => item.name === 'Plain Greek Yogurt').fat, 0);
+  assert.ok(!live.foods.find((item) => item.name === 'Plain Greek Yogurt').missingNutrition.includes('fat'));
+  assert.equal(live.foods.find((item) => item.name === 'Greek Yogurt Parfait').fat, 7);
+
+  saved = JSON.stringify(payload);
+  global.fetch = async (url) => url.startsWith('https:') ? json({}, 502) : json({}, 404);
+  const cached = await fetchTodayMenu(date);
+  assert.equal(cached.mode, 'cached');
+  assert.equal(cached.foods.find((item) => item.name === 'Plain Greek Yogurt').fat, 0);
+});
+
 test('a partial live request preserves cached failed locations without extending their age', async () => {
   const { fetchTodayMenu } = require('../lib/nutrislice.ts');
   const stored = cacheFixture();

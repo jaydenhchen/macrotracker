@@ -48,7 +48,8 @@ function normalizeFood(value: unknown): Food | null {
   const item = record(value);
   if (!item || typeof item.id !== "string" || typeof item.name !== "string" || typeof item.locationId !== "string" || typeof item.locationName !== "string") return null;
   const addOns = Array.isArray(item.addOns) ? item.addOns.map(normalizeAddOn).filter((addOn): addOn is NonNullable<typeof addOn> => Boolean(addOn)) : [];
-  const missingNutrition = Array.from(new Set([...stringArray(item.missingNutrition), ...["calories", "protein", "carbs", "fat"].filter((key) => !validNutritionValue(item[key]))]));
+  const isPlainGreekYogurt = item.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === "plain greek yogurt";
+  const missingNutrition = Array.from(new Set([...stringArray(item.missingNutrition), ...["calories", "protein", "carbs", "fat"].filter((key) => !validNutritionValue(item[key]))])).filter((key) => !(isPlainGreekYogurt && key === "fat"));
   const legacyIds = Array.from(new Set(stringArray(item.legacyIds).filter((id) => id && id !== item.id)));
   return {
     id: item.id,
@@ -68,7 +69,7 @@ function normalizeFood(value: unknown): Food | null {
     calories: numberValue(item.calories),
     protein: numberValue(item.protein),
     carbs: numberValue(item.carbs),
-    fat: numberValue(item.fat),
+    fat: isPlainGreekYogurt ? 0 : numberValue(item.fat),
     addedSugar: item.addedSugar === null ? null : validNutritionValue(item.addedSugar) ? Number(item.addedSugar) : null,
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : "",
     missingNutrition,
