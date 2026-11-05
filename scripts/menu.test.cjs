@@ -251,6 +251,43 @@ test('fractional add-ons use the same unrounded basis for logging, display and r
   assert.deepEqual(entry.nutrition, original);
 });
 
+test('saved Plain Greek Yogurt entries migrate fat while preserving other macros and add-on fat', () => {
+  const { DEFAULT_STATE, normalizeState } = require('../lib/storage.ts');
+  const date = '2026-11-04';
+  const plain = {
+    id: 'plain-no-addon',
+    foodId: 'plain-yogurt',
+    foodName: 'plain-greek-yogurt',
+    servingSize: '6 oz',
+    servings: 2,
+    nutrition: { calories: 300, protein: 30, carbs: 14, fat: 8 },
+    nutritionPerServing: { calories: 150, protein: 15, carbs: 7, fat: 4 },
+    locationName: 'Hopkins Café',
+    missingNutrition: ['fat'],
+  };
+  const withAddOn = {
+    ...plain,
+    id: 'plain-with-addon',
+    foodName: 'Plain Greek Yogurt',
+    nutrition: { calories: 340, protein: 32, carbs: 22, fat: 10 },
+    nutritionPerServing: { calories: 170, protein: 16, carbs: 11, fat: 5 },
+    missingNutrition: [],
+    addOns: [{ id: 'granola', name: 'Granola', category: 'topping', servingSize: '1 scoop', calories: 20, protein: 1, carbs: 4, fat: 2, quantity: 0.5 }],
+  };
+  const parfait = { ...plain, id: 'parfait', foodId: 'parfait', foodName: 'Greek Yogurt Parfait', nutrition: { calories: 280, protein: 19, carbs: 36, fat: 7 }, nutritionPerServing: { calories: 280, protein: 19, carbs: 36, fat: 7 }, servings: 1, missingNutrition: [] };
+  const state = normalizeState({
+    ...DEFAULT_STATE,
+    dayLogs: { [date]: { date, meals: { Breakfast: [plain, withAddOn, parfait] }, customMacros: [], waterEntries: [] } },
+  });
+  const [updatedPlain, updatedWithAddOn, unchangedParfait] = state.dayLogs[date].meals.Breakfast;
+
+  assert.deepEqual(updatedPlain.nutrition, { calories: 300, protein: 30, carbs: 14, fat: 0 });
+  assert.deepEqual(updatedPlain.nutritionPerServing, { calories: 150, protein: 15, carbs: 7, fat: 0 });
+  assert.deepEqual(updatedPlain.missingNutrition, []);
+  assert.deepEqual([updatedWithAddOn.nutritionPerServing.fat, updatedWithAddOn.nutrition.fat], [1, 2]);
+  assert.deepEqual([unchangedParfait.nutrition.fat, unchangedParfait.nutritionPerServing.fat], [7, 7]);
+});
+
 test('Levering customization is limited to builder items or stations', () => {
   const { addOnsForFood, missingAddOnNutrition } = require('../lib/customization.ts');
   const base = { id: 'base', name: 'Chef special', locationId: 'site-1', locationName: 'Levering Kitchens', stationName: 'Build Your Own', mealPeriods: ['Lunch'], addOns: [] };

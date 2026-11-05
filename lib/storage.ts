@@ -1,3 +1,4 @@
+import { isPlainGreekYogurtName } from "./food-corrections";
 import { DayLog, MacroEntry, MealAddOn, MealEntry, TrackerState, UserProfile, WaterEntry, WeightEntry } from "./types";
 
 const DB_NAME = "bluejay-fuel";
@@ -45,12 +46,13 @@ function normalizeMealEntry(value: unknown): MealEntry | null {
   const nutrition = isRecord(value.nutrition) ? value.nutrition : {};
   const perServing = isRecord(value.nutritionPerServing) ? value.nutritionPerServing : null;
   const addOns = Array.isArray(value.addOns) ? value.addOns.map(normalizeMealAddOn).filter((addOn): addOn is MealAddOn => Boolean(addOn)) : undefined;
-  return {
+  const servings = Math.max(0.25, finiteNumber(value.servings, 1));
+  const entry: MealEntry = {
     id: value.id,
     foodId: value.foodId,
     foodName: value.foodName,
     servingSize: value.servingSize,
-    servings: Math.max(0.25, finiteNumber(value.servings, 1)),
+    servings,
     nutrition: {
       calories: finiteNumber(nutrition.calories, 0),
       protein: finiteNumber(nutrition.protein, 0),
@@ -63,6 +65,16 @@ function normalizeMealEntry(value: unknown): MealEntry | null {
     } : {}),
     ...(Array.isArray(value.missingNutrition) ? { missingNutrition: value.missingNutrition.filter((key): key is string => ["calories", "protein", "carbs", "fat"].includes(String(key))) } : {}),
     ...(addOns?.length ? { addOns } : {}),
+  };
+  if (!isPlainGreekYogurtName(entry.foodName)) return entry;
+
+  const addOnFatPerServing = (entry.addOns ?? []).reduce((total, addOn) => total + addOn.fat * addOn.quantity, 0);
+  const missingNutrition = entry.missingNutrition?.filter((key) => key !== "fat");
+  return {
+    ...entry,
+    nutrition: { ...entry.nutrition, fat: Math.round(addOnFatPerServing * entry.servings * 10) / 10 },
+    ...(entry.nutritionPerServing ? { nutritionPerServing: { ...entry.nutritionPerServing, fat: addOnFatPerServing } } : {}),
+    ...(missingNutrition ? { missingNutrition } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import { isPlainGreekYogurtName } from "./food-corrections";
 import { Food, FoodAddOn } from "./types";
 
 export const NUTRISLICE_LOCATIONS = [
@@ -48,7 +49,7 @@ function normalizeFood(value: unknown): Food | null {
   const item = record(value);
   if (!item || typeof item.id !== "string" || typeof item.name !== "string" || typeof item.locationId !== "string" || typeof item.locationName !== "string") return null;
   const addOns = Array.isArray(item.addOns) ? item.addOns.map(normalizeAddOn).filter((addOn): addOn is NonNullable<typeof addOn> => Boolean(addOn)) : [];
-  const isPlainGreekYogurt = item.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === "plain greek yogurt";
+  const isPlainGreekYogurt = isPlainGreekYogurtName(item.name);
   const missingNutrition = Array.from(new Set([...stringArray(item.missingNutrition), ...["calories", "protein", "carbs", "fat"].filter((key) => !validNutritionValue(item[key]))])).filter((key) => !(isPlainGreekYogurt && key === "fat"));
   const legacyIds = Array.from(new Set(stringArray(item.legacyIds).filter((id) => id && id !== item.id)));
   return {

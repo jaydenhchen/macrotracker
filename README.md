@@ -37,6 +37,7 @@ Goals, food logs, favorites, and weights are never sent to the API. They stay in
 The Today view also stores hydration entries and outside macro sources on-device. Use the hydration quick-add controls for water, or use **Add outside source** for items such as protein powder; calories are inferred from protein, carbs, and fat when you leave calories blank. The **Where your macros came from** table shows each Hopkins food and outside entry beside its calories, protein, carbs, and fat.
 
 Food logging defaults to Breakfast, Lunch, or Dinner based on the device’s local time. Choose another meal in the add-food dialog, or move an existing logged entry to a different meal from its meal section.
+Existing local Plain Greek Yogurt log entries are corrected to 0 g fat on load; other macros and any add-on fat are preserved.
 
 The app calls the Cloudflare Worker at `NEXT_PUBLIC_MENU_API_URL` for the selected date. If the Worker is unavailable, times out, or returns malformed data, it uses a real Nutrislice menu for that same date saved on the device or published at `/api/menus/YYYY-MM-DD.json` by the Pages build. Saved data expires after 24 hours and is clearly labeled. If no valid menu is available, the app displays an unavailable state with official menu links. The legacy starter catalog under `/api/v1/` is not used as today's menu. The client never sends goals, food logs, favorites, or weights to the Worker.
 

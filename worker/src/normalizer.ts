@@ -1,3 +1,4 @@
+import { isPlainGreekYogurtName } from "../../lib/food-corrections";
 export type NutrisliceLocation = {
   id: string;
   name: string;
@@ -288,7 +289,7 @@ export function normalizeMenuItem(item: JsonRecord, location: NutrisliceLocation
   if (!rawFood) return null;
   const name = stringValue(rawFood.name);
   if (!name) return null;
-  const isPlainGreekYogurt = normalizedText(name) === "plain greek yogurt";
+  const isPlainGreekYogurt = isPlainGreekYogurtName(name);
 
   const nutrition = record(rawFood.rounded_nutrition_info) ?? record(rawFood.nutrition_info) ?? record(item.rounded_nutrition_info) ?? {};
   const nutritionSources = [
