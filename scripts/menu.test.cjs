@@ -70,6 +70,18 @@ test('empty or malformed directory produces a useful error and no fictional food
   assert.equal(resolveMenuTargets([{ name: '', slug: '', active_menu_types: [] }]).length, 0);
 });
 
+test('upstream redirects use the Workers-supported manual policy and are not followed', async () => {
+  const redirects = [];
+  global.fetch = async (_url, options) => {
+    redirects.push(options.redirect);
+    return new Response(null, { status: 302, headers: { Location: 'https://example.com/redirected' } });
+  };
+
+  const result = await fetchMenu('2026-10-21');
+  assert.deepEqual(redirects, ['manual']);
+  assert.equal(result.errors[0].message, 'upstream status 302');
+});
+
 test('missing macros are explicitly flagged and station headings never become food', () => {
   assert.equal(normalizeMenuItem({ text: 'Closed today', food: null }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21'), null);
   const item = normalizeMenuItem({ food: { id: 1, name: 'Unknown macros', rounded_nutrition_info: { calories: 0 } } }, HOPKINS_LOCATIONS[0], 'lunch', '2026-10-21');

@@ -64,7 +64,7 @@ async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal, redirect: "error" });
+    const response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal, redirect: "manual" });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`upstream status ${response.status}`);
